@@ -238,7 +238,14 @@ int slisk_usb_run(void){
     /* No controller frames before the system confirms a distinct owner.
        Bound the user-selection experiment; never hold the prompt for 90s. */
     slisk_status("VDA_WAITING_FOR_OWNER");
-    phase=2;deadline=now+10000;
+    /* Diagnostic only: send ONE neutral frame before ownership is known.
+       Never forward Xbox buttons until a distinct owner is confirmed. */
+    { ScePadData neutral; c4fPadDataNeutral(&neutral);
+      int32_t probe_rc=c4fVirtualPadInsert(&pad,&neutral);
+      c4fLog("SLISK PRE_OWNER_NEUTRAL_INSERT_RC=0x%08x\n",(unsigned)probe_rc);
+      if(probe_rc!=0){slisk_status("PRE_OWNER_NEUTRAL_REJECTED_CLEANUP");break;}
+      slisk_status("PRE_OWNER_NEUTRAL_ACCEPTED_WAIT_OWNER"); }
+    phase=2;deadline=now_ms()+8000;
    }else if(now>deadline){c4fLog("SLISK AddDevice was not confirmed within timeout\n");break;}
   }
   if(phase==2||phase==3){
