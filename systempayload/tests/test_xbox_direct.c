@@ -8,6 +8,7 @@
 void slisk_test_map_frame(const XWPadFrame*,ScePadData*);
 int slisk_test_owner_allowed(uint32_t,int32_t);
 void c4fLog(const char*fmt,...){(void)fmt;}
+void c4fNotify(const char*fmt,...){(void)fmt;}
 void c4fLogSetKlog(int enabled){(void)enabled;}
 int c4fKlogOpenDevice(void){return -1;}
 void c4fKlogMark(const char*s){(void)s;}
