@@ -32,6 +32,8 @@ typedef struct { uint8_t bLength,bDescriptorType; uint16_t wTotalLength; uint8_t
 
 typedef struct {
  void *library;
+ int32_t (*init)(void);
+ int32_t (*exit)(void);
  int32_t (*devices)(usb_device***);
  int32_t (*free_devices)(usb_device**);
  int32_t (*descriptor)(usb_device*,UsbDevDesc*);
@@ -58,6 +60,7 @@ static int usbd_init(Usbd *u){
  memset(u,0,sizeof(*u));
  for(size_t i=0;i<sizeof(paths)/sizeof(paths[0]);i++){u->library=dlopen(paths[i],RTLD_NOW|RTLD_GLOBAL);if(u->library)break;}
  if(!u->library){slisk_status("USB_LIBRARY_MISSING");c4fNotify("Slisk: libSceUsbd saknas, stoppar");return -1;}
+ GETSYM("sceUsbdInit",init);GETSYM("sceUsbdExit",exit);
  GETSYM("sceUsbdGetDeviceList",devices); GETSYM("sceUsbdFreeDeviceList",free_devices);
  GETSYM("sceUsbdGetDeviceDescriptor",descriptor); GETSYM("sceUsbdGetActiveConfigDescriptor",config);
  GETSYM("sceUsbdFreeConfigDescriptor",free_config); GETSYM("sceUsbdOpen",open);
@@ -170,11 +173,11 @@ int slisk_usb_run(void){
  int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
  uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0;int phase=0, missing_alerted=0;
  xw_init(&state);log.fd=-1;
- slisk_status("LOOP_ENTERED");if(usbd_init(&rx.f)!=0)return 1;slisk_status("USB_SYMBOLS_OK");c4fNotify("Slisk: USB-bibliotek laddat; söker mottagare");
+ slisk_status("LOOP_ENTERED");if(usbd_init(&rx.f)!=0)return 1;slisk_status("USB_SYMBOLS_OK");int32_t usb_init_rc=rx.f.init();if(usb_init_rc!=0){slisk_status("USB_INIT_FAILED");c4fNotify("Slisk: sceUsbdInit misslyckades");return 3;}slisk_status("USB_INITIALIZED");c4fNotify("Slisk: USB initierat; söker mottagare");
  c4fLog("SLISK Xbox USB backend initialized, waiting for receiver\n");
  int login_rc=c4fLoginUsers(before_users);
  if(login_rc==0)for(int i=0;i<4;i++)if(before_users[i]>0){first_user=before_users[i];break;}
- if(login_rc!=0||first_user<=0){slisk_status("NO_DS4_OWNER");c4fNotify("Slisk: kan inte hitta DS4-anvandare, stoppar");receiver_close(&rx);if(rx.f.library)dlclose(rx.f.library);return 2;}
+ if(login_rc!=0||first_user<=0){slisk_status("NO_DS4_OWNER");c4fNotify("Slisk: kan inte hitta DS4-anvandare, stoppar");receiver_close(&rx);if(rx.f.exit)(void)rx.f.exit();if(rx.f.library)dlclose(rx.f.library);return 2;}
  while(now_ms()-begun<TEST_MAX_MS){
   uint64_t now=now_ms();
   if(!rx.handle){if(!missing_alerted && now-begun>=15000){missing_alerted=1;slisk_status("USB_RECEIVER_NOT_FOUND_15S");c4fNotify("Slisk: ingen Xbox-mottagare efter 15 sekunder");}if(now-last_open>=1000){last_open=now;if(receiver_open(&rx)==0){slisk_status("USB_RECEIVER_READY");c4fNotify("Slisk: Xbox-mottagare hittad, tryck A");}}usleep(25000);continue;}
@@ -223,6 +226,7 @@ int slisk_usb_run(void){
  if(log.fd>=0)close(log.fd);
  c4fLogSetKlog(1);
  receiver_close(&rx);
+ if(rx.f.exit)(void)rx.f.exit();
  if(rx.f.library)dlclose(rx.f.library);
  c4fLog("SLISK native USB loop exited\n");return 0;
 }
