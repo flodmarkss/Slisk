@@ -16,6 +16,8 @@ int32_t c4fVirtualPadAdd(int32_t);
 void c4fVirtualPadAdopt(C4fVirtualPad *,int32_t,int32_t,uint64_t);
 int32_t c4fVirtualPadInsert(const C4fVirtualPad *,const ScePadData *);
 void c4fVirtualPadRemove(C4fVirtualPad *);
+typedef struct {uint8_t large,small,r,g,b;} C4fPadFeedback;
+int32_t c4fVirtualPadFeedback(const C4fVirtualPad *,C4fPadFeedback *);
 void c4fPadDataNeutral(ScePadData *);
 int32_t c4fLoginUsers(int32_t userIds[4]);
 #endif
