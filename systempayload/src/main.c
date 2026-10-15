@@ -44,7 +44,7 @@ int main(void){
  lock=open(C4F_LOG_DIR "/instance.lock",O_WRONLY|O_CREAT,0666);
  if(lock<0 || flock(lock,LOCK_EX|LOCK_NB)!=0){if(lock>=0)close(lock);return 1;}
  c4fLogOpen();
- {int f=open("/data/slisk-v092-status.txt",O_WRONLY|O_CREAT|O_TRUNC,0666);if(f>=0){ssize_t nw=write(f,"ENTRY\n",6);(void)nw;close(f);}}
+
  c4fLog("SLISK native Xbox 360 PS4 payload starting, firmware=%08x\n",(unsigned)kernel_get_fw_version());
  if(authorize()!=0)goto done;
  int32_t rc=sceUserServiceInitialize(NULL);

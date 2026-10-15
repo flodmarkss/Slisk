@@ -35,7 +35,14 @@ jobs:
           p=Path('upstream/include/c4f_log.h')
           s=p.read_text()
           assert s.count('/data/control4free')==1
-          p.write_text(s.replace('/data/control4free','/data/slisk_x360'))
+          s=s.replace('/data/control4free','/data/slisk_x360')
+          assert s.count('"/control4free.log"')==1
+          p.write_text(s.replace('"/control4free.log"','"/slisk.log"'))
+          p=Path('upstream/src/log.c')
+          s=p.read_text()
+          assert '---- Control4Free %s' in s
+          assert '[c4f] [' in s
+          p.write_text(s.replace('---- Control4Free %s','---- Slisk %s').replace('[c4f] [','[slisk] ['))
           PY
       - name: Use Ubuntu registry mirror when upstream registry is rate-limited
         working-directory: systempayload
