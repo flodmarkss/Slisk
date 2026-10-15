@@ -1,0 +1,217 @@
+/* Slisk Xbox 360 Wireless Receiver -> virtual DualShock 4.
+ * Host process: GoldHEN system payload, NOT a game PRX.
+ * Direct receiver access via Sony libSceUsbd. No network transport.
+ * Virtual device routines supplied by PS4-verified GPL-3.0 Control4Free core.
+ */
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <time.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <dlfcn.h>
+#include "xw_core.h"
+#include "c4f_vda.h"
+#include "c4f_log.h"
+
+#define MAX_RADIOS 4
+#define USB_TIMEOUT_MS 12
+#define TEST_MAX_MS (8u*60u*1000u)
+
+/* libusb 1.0 USB descriptor ABI (used by libSceUsbd). */
+typedef struct usb_device usb_device;
+typedef struct usb_handle usb_handle;
+typedef struct { uint8_t bLength,bDescriptorType; uint16_t bcdUSB; uint8_t bDeviceClass,bDeviceSubClass,bDeviceProtocol,bMaxPacketSize0; uint16_t idVendor,idProduct,bcdDevice; uint8_t iManufacturer,iProduct,iSerialNumber,bNumConfigurations; } UsbDevDesc;
+typedef struct { uint8_t bLength,bDescriptorType,bEndpointAddress,bmAttributes; uint16_t wMaxPacketSize; uint8_t bInterval,bRefresh,bSynchAddress; const uint8_t *extra; int extra_length; } UsbEndDesc;
+typedef struct { uint8_t bLength,bDescriptorType,bInterfaceNumber,bAlternateSetting,bNumEndpoints,bInterfaceClass,bInterfaceSubClass,bInterfaceProtocol,iInterface; const UsbEndDesc *endpoint; const uint8_t *extra; int extra_length; } UsbInterfaceDesc;
+typedef struct { const UsbInterfaceDesc *altsetting; int num_altsetting; } UsbInterface;
+typedef struct { uint8_t bLength,bDescriptorType; uint16_t wTotalLength; uint8_t bNumInterfaces,bConfigurationValue,iConfiguration,bmAttributes,MaxPower; const UsbInterface *interface; const uint8_t *extra; int extra_length; } UsbConfig;
+
+typedef struct {
+ void *library;
+ int32_t (*devices)(usb_device***);
+ int32_t (*free_devices)(usb_device**);
+ int32_t (*descriptor)(usb_device*,UsbDevDesc*);
+ int32_t (*config)(usb_device*,UsbConfig**);
+ int32_t (*free_config)(UsbConfig*);
+ int32_t (*open)(usb_device*,usb_handle**);
+ int32_t (*claim)(usb_handle*,int32_t);
+ int32_t (*release)(usb_handle*,int32_t);
+ int32_t (*transfer)(usb_handle*,unsigned char,unsigned char*,int32_t,int32_t*,uint32_t);
+ void (*close)(usb_handle*);
+} Usbd;
+typedef struct { Usbd f; usb_handle *handle; unsigned intf,ep_in,ep_out; int claimed; } Receiver;
+
+static uint64_t now_ms(void){ struct timespec ts={0}; clock_gettime(CLOCK_MONOTONIC,&ts); return (uint64_t)ts.tv_sec*1000u + (uint64_t)ts.tv_nsec/1000000u; }
+static int symbol(void *h,const char *name,void *out){void *p=dlsym(h,name); if(!p)return -1; memcpy(out,&p,sizeof(p));return 0;}
+#define GETSYM(name,field) do{if(symbol(u->library,name,&u->field)){c4fLog("SLISK missing %s\n",name);return -1;}}while(0)
+static int usbd_init(Usbd *u){
+ static const char *paths[]={"/system/common/lib/libSceUsbd.sprx","libSceUsbd.sprx","libSceUsbd"};
+ memset(u,0,sizeof(*u));
+ for(size_t i=0;i<sizeof(paths)/sizeof(paths[0]);i++){u->library=dlopen(paths[i],RTLD_NOW|RTLD_GLOBAL);if(u->library)break;}
+ if(!u->library){c4fLog("SLISK libSceUsbd not available; stopping safely\n");return -1;}
+ GETSYM("sceUsbdGetDeviceList",devices); GETSYM("sceUsbdFreeDeviceList",free_devices);
+ GETSYM("sceUsbdGetDeviceDescriptor",descriptor); GETSYM("sceUsbdGetActiveConfigDescriptor",config);
+ GETSYM("sceUsbdFreeConfigDescriptor",free_config); GETSYM("sceUsbdOpen",open);
+ GETSYM("sceUsbdClaimInterface",claim);GETSYM("sceUsbdReleaseInterface",release);
+ GETSYM("sceUsbdInterruptTransfer",transfer);GETSYM("sceUsbdClose",close);
+ return 0;
+}
+static void receiver_close(Receiver *r){if(r->handle){if(r->claimed)r->f.release(r->handle,(int32_t)r->intf);r->f.close(r->handle);}r->handle=NULL;r->claimed=0;}
+static int receiver_open(Receiver *r){
+ usb_device **list=NULL;int32_t n=r->f.devices(&list); if(n<=0||!list)return -1;
+ for(int32_t i=0;i<n;i++){
+  UsbDevDesc d={0}; UsbConfig *cfg=NULL;int found=0;
+  if(r->f.descriptor(list[i],&d)!=0 || !xw_is_supported_receiver(d.idVendor,d.idProduct))continue;
+  if(r->f.config(list[i],&cfg)!=0||!cfg)continue;
+  for(unsigned j=0;j<cfg->bNumInterfaces&&!found;j++){
+   const UsbInterface *ifc=&cfg->interface[j];
+   for(int k=0;k<ifc->num_altsetting&&!found;k++){
+    const UsbInterfaceDesc *alt=&ifc->altsetting[k];unsigned in=0,out=0;
+    if(alt->bAlternateSetting||alt->bInterfaceClass!=0xff||alt->bInterfaceSubClass!=0x5d||alt->bInterfaceProtocol!=0x81)continue;
+    for(unsigned e=0;e<alt->bNumEndpoints;e++){
+     const UsbEndDesc *ep=&alt->endpoint[e];if((ep->bmAttributes&3u)!=3u)continue;
+     if(ep->bEndpointAddress&0x80u)in=ep->bEndpointAddress;else out=ep->bEndpointAddress;
+    }
+    if(in&&out){r->intf=alt->bInterfaceNumber;r->ep_in=in;r->ep_out=out;found=1;}
+   }
+  }
+  r->f.free_config(cfg);
+  if(!found)continue;
+  if(r->f.open(list[i],&r->handle)==0&&r->handle){
+   if(r->f.claim(r->handle,(int32_t)r->intf)==0){r->claimed=1;c4fLog("SLISK receiver claimed %04x:%04x interface=%u IN=%u OUT=%u\n",d.idVendor,d.idProduct,r->intf,r->ep_in,r->ep_out);break;}
+   receiver_close(r);
+  }
+ }
+ r->f.free_devices(list);
+ if(!r->claimed)return -1;
+ uint8_t inquiry[12]={0x08,0,0x0f,0xc0,0,0,0,0,0,0,0,0};int32_t sent=0;
+ (void)r->f.transfer(r->handle,(uint8_t)r->ep_out,inquiry,sizeof(inquiry),&sent,100);
+ return 0;
+}
+static XWPacketResult receiver_poll(Receiver *r,XWReceiver *state,uint64_t ms){
+ uint8_t packet[64];int32_t n=0;
+ if(r->f.transfer(r->handle,(uint8_t)r->ep_in,packet,sizeof(packet),&n,USB_TIMEOUT_MS)!=0||n<=0||(size_t)n>sizeof(packet))return XW_PACKET_IGNORED;
+ return xw_receive(state,0,packet,(size_t)n,ms);
+}
+static uint32_t ps4_buttons(uint32_t b){
+ uint32_t out=0; const struct {uint32_t from,to;} m[]={
+ {XW_BTN_CROSS,0x4000},{XW_BTN_CIRCLE,0x2000},{XW_BTN_SQUARE,0x8000},{XW_BTN_TRIANGLE,0x1000},
+ {XW_BTN_L1,0x400},{XW_BTN_R1,0x800},{XW_BTN_L3,0x2},{XW_BTN_R3,0x4},
+ {XW_BTN_OPTIONS,0x8},{XW_BTN_SHARE,0x1},{XW_BTN_UP,0x10},{XW_BTN_DOWN,0x40},
+ {XW_BTN_LEFT,0x80},{XW_BTN_RIGHT,0x20},{XW_BTN_PS,0x10000}};
+ for(size_t i=0;i<sizeof(m)/sizeof(m[0]);i++) { if(b&m[i].from)out|=m[i].to; }
+ return out;
+}
+static void mapped(const XWPadFrame *f,ScePadData *d){
+ c4fPadDataNeutral(d); if(!f)return;
+ d->buttons=ps4_buttons(f->buttons); d->lx=f->left_x;d->ly=f->left_y;
+ d->rx=f->right_x;d->ry=f->right_y;d->l2=f->l2;d->r2=f->r2;
+ if(f->l2>32) d->buttons|=0x100u;
+ if(f->r2>32) d->buttons|=0x200u;
+}
+
+/* A klog read must first show a marker written by this process. Never adopt an
+ * old event from before device creation; abort on ambiguous multiple devices. */
+typedef struct {int fd; char line[1024];size_t used;char marker[64];int seen_marker;uint64_t candidate;unsigned candidates;uint32_t owner;int owner_seen;} LogScan;
+static void handle_line(LogScan *s){
+ s->line[s->used]=0;
+ if(strstr(s->line,s->marker))s->seen_marker=1;
+ if(s->seen_marker&&c4fKlogIsVirtualAdd(s->line)){
+  uint64_t id=c4fKlogDeviceId(s->line);
+  if(id && (!s->candidate||s->candidate!=id)){s->candidate=id;s->candidates++;}
+ }
+ if(s->candidate){
+  unsigned long long id=0;unsigned owner=0;
+  if(sscanf(s->line,"%*[^D]DEVICE_OWNER_CHANGED [DeviceId:0x%llx][UserId:0x%x]",&id,&owner)==2&&id==s->candidate){s->owner=owner;s->owner_seen=1;}
+  else {const char *p=strstr(s->line,"DEVICE_OWNER_CHANGED [DeviceId:");if(p && sscanf(p,"DEVICE_OWNER_CHANGED [DeviceId:0x%llx][UserId:0x%x]",&id,&owner)==2&&id==s->candidate){s->owner=owner;s->owner_seen=1;}}
+ }
+ s->used=0;
+}
+static void scan(LogScan *s){char b[1024];for(int r=0;r<6;r++){
+ ssize_t n=read(s->fd,b,sizeof(b));if(n<=0)break;
+ for(ssize_t i=0;i<n;i++){
+  if(b[i]=='\n')handle_line(s);
+  else if(b[i]!='\r'){if(s->used+1<sizeof(s->line))s->line[s->used++]=b[i];else s->used=0;}
+ }
+}}
+static int verify_reader(LogScan *s){
+ s->fd=c4fKlogOpenDevice();if(s->fd<0)return -1;
+ /* Flush historical log lines before setting a new marker. */
+ for(unsigned i=0;i<20;i++){scan(s);usleep(12000);}
+ snprintf(s->marker,sizeof(s->marker),"slisk-unique-%llu",(unsigned long long)now_ms());
+ s->candidate=0;s->candidates=0;s->seen_marker=0;
+ c4fKlogMark(s->marker);
+ uint64_t until=now_ms()+1600;
+ while(now_ms()<until){scan(s);if(s->seen_marker)return 0;usleep(10000);}
+ c4fLog("SLISK klog marker not received, refusing AddDevice\n");return -1;
+}
+
+static int slisk_owner_allowed(uint32_t owner,int32_t ds4){
+ return owner>0xffu && owner!=0xffffffffu && (ds4<=0 || owner!=(uint32_t)ds4);
+}
+int slisk_usb_run(void){
+ Receiver rx={0};XWReceiver state; C4fVirtualPad pad={0};LogScan log={0};
+ int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
+ uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0;int phase=0;
+ xw_init(&state);log.fd=-1;
+ if(usbd_init(&rx.f)!=0)return 1;
+ c4fLog("SLISK Xbox USB backend initialized, waiting for receiver\n");
+ if(c4fLoginUsers(before_users)==0)for(int i=0;i<4;i++)if(before_users[i]>0){first_user=before_users[i];break;}
+ while(now_ms()-begun<TEST_MAX_MS){
+  uint64_t now=now_ms();
+  if(!rx.handle){if(now-last_open>=1000){last_open=now;if(receiver_open(&rx)==0)c4fLog("SLISK USB receiver ready\n");}usleep(25000);continue;}
+  XWPacketResult res=receiver_poll(&rx,&state,now);
+  if(res==XW_PACKET_DISCONNECTED){c4fLog("SLISK Xbox disconnected\n");if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);c4fVirtualPadInsert(&pad,&neut);c4fVirtualPadRemove(&pad);}phase=0;break;}
+  XWPadFrame f=xw_frame_for_virtual(&state,0,now);
+  if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){
+   c4fLog("SLISK Xbox A pressed, starting verified native controller registration\n");
+   if(verify_reader(&log)!=0)break;
+   /* AddDevice status may be nonzero even if device appears: only the MBus
+      ID observed after our verified marker decides whether it exists. */
+   int32_t rc=c4fVirtualPadAdd(C4F_VDA_USER_SELECT);
+   c4fLog("SLISK AddDevice raw status 0x%08x\n",(unsigned)rc);
+   log.candidate=0;log.candidates=0;log.owner_seen=0;
+   phase=1;deadline=now+3000;
+  }
+  if(phase && log.fd>=0)scan(&log);
+  if(phase==1){
+   if(log.candidates>1){c4fLog("SLISK ambiguous MBus add events: aborting without adopting a device\n");break;}
+   if(log.candidate&&log.candidates==1){
+    c4fVirtualPadAdopt(&pad,-1,C4F_VDA_USER_SELECT,log.candidate);
+    c4fLog("SLISK virtual controller created id=0x%llx: select a different user/guest\n",(unsigned long long)pad.deviceId);
+    phase=2;deadline=now+90000;
+   }else if(now>deadline){c4fLog("SLISK AddDevice was not confirmed within timeout\n");break;}
+  }
+  if(phase==2||phase==3){
+   if(state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms>30000){c4fLog("SLISK USB input silent 30s; stopping\n");break;}
+   if(log.owner_seen&&log.owner!=0xffffffffu&&log.owner>0xffu){
+    if(!slisk_owner_allowed(log.owner,first_user)){c4fLog("SLISK same user as DS4; choose guest, stopping\n");break;}
+    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);phase=3;}
+   }
+   if(phase==2 && now>deadline){c4fLog("SLISK user selection timeout\n");break;}
+   if(now-last_frame>=16){
+    ScePadData d;
+    if(phase==3 && state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms<=2500)
+       mapped(&f,&d);
+    else c4fPadDataNeutral(&d);
+    int32_t rc=c4fVirtualPadInsert(&pad,&d);
+    if(rc!=0){c4fLog("SLISK InsertData returned 0x%08x: neutralize and stop\n",(unsigned)rc);break;}
+    last_frame=now;
+   }
+  }
+  if(phase==3 && res==XW_PACKET_INPUT && ((f.buttons&(XW_BTN_OPTIONS|XW_BTN_SHARE))==(XW_BTN_OPTIONS|XW_BTN_SHARE))){c4fLog("SLISK start+back requested shutdown\n");break;}
+ }
+ if(pad.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad,&d);c4fVirtualPadRemove(&pad);}
+ if(log.fd>=0)close(log.fd);
+ receiver_close(&rx);
+ if(rx.f.library)dlclose(rx.f.library);
+ c4fLog("SLISK native USB loop exited\n");return 0;
+}
+#ifdef SLISK_TEST
+void slisk_test_map_frame(const XWPadFrame *f,ScePadData *out){mapped(f,out);}
+int slisk_test_owner_allowed(uint32_t owner,int32_t active_ds4){return slisk_owner_allowed(owner,active_ds4);}
+#endif
