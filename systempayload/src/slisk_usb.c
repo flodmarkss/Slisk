@@ -208,7 +208,13 @@ int slisk_usb_run(void){
   if(!rx.handle){if(!missing_alerted && now-begun>=15000){missing_alerted=1;slisk_status("USB_RECEIVER_NOT_FOUND_15S");c4fNotify("Slisk: ingen Xbox-mottagare efter 15 sekunder");}if(now-last_open>=1000){last_open=now;if(receiver_open(&rx)==0){slisk_status("USB_RECEIVER_READY");c4fNotify("Slisk: USB-mottagare hittad; paketdiagnostik aktiv, tryck A");}}usleep(25000);continue;}
   XWPacketResult res=receiver_poll(&rx,&state,now);
   if(res==XW_PACKET_CONNECTED)slisk_status("XBOX_CONTROLLER_CONNECTED");
-  if(res==XW_PACKET_DISCONNECTED){c4fLog("SLISK Xbox disconnected\n");if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);c4fVirtualPadInsert(&pad,&neut);c4fVirtualPadRemove(&pad);}phase=0;break;}
+  if(res==XW_PACKET_DISCONNECTED){
+   c4fLog("SLISK Xbox radio disconnected or idle; continuing to poll receiver\n");
+   slisk_status("XBOX_RADIO_DISCONNECTED_WAITING");
+   if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);(void)c4fVirtualPadInsert(&pad,&neut);c4fVirtualPadRemove(&pad);}
+   phase=0;
+   continue;
+  }
   XWPadFrame f=xw_frame_for_virtual(&state,0,now);
   if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
    c4fLog("SLISK Xbox A pressed, starting verified native controller registration\n");
