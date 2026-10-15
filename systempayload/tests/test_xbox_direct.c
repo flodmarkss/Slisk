@@ -50,6 +50,19 @@ int main(void){
  assert(slisk_test_pre_owner_buttons(XW_BTN_UP)==0x10u);
  assert(slisk_test_pre_owner_buttons(XW_BTN_CIRCLE|XW_BTN_TRIANGLE|XW_BTN_L1)==0u);
  assert(slisk_test_pre_owner_buttons(XW_BTN_CROSS|XW_BTN_CIRCLE)==0x4000u);
+ /* Two independent radio slots must never mirror each other's buttons. */
+ XWReceiver pair; xw_init(&pair);
+ assert(xw_receive(&pair,0,press,sizeof(press),100)==XW_PACKET_INPUT);
+ assert(xw_receive(&pair,1,release,sizeof(release),100)==XW_PACKET_INPUT);
+ assert(xw_radio_for_virtual(&pair,0)==0);
+ assert(xw_radio_for_virtual(&pair,1)==1);
+ assert((xw_frame_for_virtual(&pair,0,100).buttons&XW_BTN_CROSS)!=0);
+ assert((xw_frame_for_virtual(&pair,1,100).buttons&XW_BTN_CROSS)==0);
+ assert(xw_receive(&pair,1,press,sizeof(press),200)==XW_PACKET_INPUT);
+ assert((xw_frame_for_virtual(&pair,1,200).buttons&XW_BTN_CROSS)!=0);
+ assert(xw_receive(&pair,0,release,sizeof(release),210)==XW_PACKET_INPUT);
+ assert((xw_frame_for_virtual(&pair,0,210).buttons&XW_BTN_CROSS)==0);
+ assert((xw_frame_for_virtual(&pair,1,210).buttons&XW_BTN_CROSS)!=0);
  puts("Slisk recorded Xbox USB -> virtual PS4 sample & owner guards: PASS");
  return 0;
 }
