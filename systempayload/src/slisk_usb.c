@@ -173,8 +173,18 @@ static void handle_line(LogScan *s){
  }
  if(s->candidate){
   unsigned long long id=0;unsigned owner=0;
-  if(sscanf(s->line,"%*[^D]DEVICE_OWNER_CHANGED [DeviceId:0x%llx][UserId:0x%x]",&id,&owner)==2&&id==s->candidate){s->owner=owner;s->owner_seen=1;}
-  else {const char *p=strstr(s->line,"DEVICE_OWNER_CHANGED [DeviceId:");if(p && sscanf(p,"DEVICE_OWNER_CHANGED [DeviceId:0x%llx][UserId:0x%x]",&id,&owner)==2&&id==s->candidate){s->owner=owner;s->owner_seen=1;}}
+  /* Locate the event anywhere within a decorated klog line. Accept extra
+   * event fields between the two bracketed keys, but never another device. */
+  const char *event=strstr(s->line,"DEVICE_OWNER_CHANGED");
+  if(event){
+   const char *device=strstr(event,"[DeviceId:0x");
+   const char *user=strstr(event,"[UserId:0x");
+   if(device && user && sscanf(device,"[DeviceId:0x%llx]",&id)==1 &&
+      sscanf(user,"[UserId:0x%x]",&owner)==1 &&
+      (uint64_t)id==s->candidate) {
+    s->owner=owner;s->owner_seen=1;
+   }
+  }
  }
  s->used=0;
 }
@@ -291,6 +301,19 @@ int slisk_usb_run(void){
  c4fLog("SLISK native USB loop exited\n");return 0;
 }
 #ifdef SLISK_TEST
+int slisk_test_owner_event(const char *line,uint64_t candidate,uint32_t *out_owner){
+ LogScan scan_state={0};
+ scan_state.candidate=candidate;
+ scan_state.seen_marker=1;
+ size_t len=strlen(line);
+ if(!out_owner || len>=sizeof(scan_state.line))return 0;
+ memcpy(scan_state.line,line,len);
+ scan_state.used=len;
+ handle_line(&scan_state);
+ if(!scan_state.owner_seen)return 0;
+ *out_owner=scan_state.owner;
+ return 1;
+}
 void slisk_test_map_frame(const XWPadFrame *f,ScePadData *out){mapped(f,out);}
 int slisk_test_owner_allowed(uint32_t owner,int32_t active_ds4){return slisk_owner_allowed(owner,active_ds4);}
 #endif
