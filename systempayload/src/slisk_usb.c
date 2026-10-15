@@ -105,6 +105,20 @@ static int receiver_open(Receiver *r){
  (void)r->f.transfer(r->handle,(uint8_t)r->ep_out,inquiry,sizeof(inquiry),&sent,100);
  return 0;
 }
+/* Wireless Xbox 360 player ring command, as documented by Linux xpad.
+ * Player 2 uses command 7 (top-right steady). This sends on the already
+ * claimed receiver OUT endpoint, and never changes the input path. */
+static void receiver_set_player_two_led(Receiver *r){
+ if(!r || !r->handle || !r->claimed || !r->ep_out)return;
+ uint8_t packet[12]={0x00,0x00,0x08,0x47,0,0,0,0,0,0,0,0};
+ int32_t sent=0;
+ int32_t rc=r->f.transfer(r->handle,(uint8_t)r->ep_out,packet,
+                          (int32_t)sizeof(packet),&sent,100);
+ c4fLog("SLISK PLAYER2_LED rc=0x%08x sent=%d command=0x47\n",
+        (unsigned)rc,(int)sent);
+ if(rc==0 && sent==(int32_t)sizeof(packet))slisk_status("PLAYER2_LED_SENT");
+ else slisk_status("PLAYER2_LED_WRITE_FAILED");
+}
 /* Diagnostic capture is bounded: 24 packets and 8 non-timeout errors.
  * A receiver being enumerated is not proof that controller input reaches us. */
 static XWPacketResult receiver_poll(Receiver *r,XWReceiver *state,uint64_t ms){
@@ -284,7 +298,7 @@ int slisk_usb_run(void){
    if(log.owner_seen && phase==2){static int owner_logged=0;if(!owner_logged++){c4fLog("SLISK VDA_OWNER_SEEN owner=0x%08x expected_not=0x%08x\n",(unsigned)log.owner,(unsigned)first_user);}}
    if(log.owner_seen&&log.owner!=0xffffffffu&&log.owner>0xffu){
     if(!slisk_owner_allowed(log.owner,first_user)){c4fLog("SLISK same user as DS4; choose guest, stopping\n");break;}
-    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);phase=3;}
+    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);phase=3;receiver_set_player_two_led(&rx);}
    }
    if(phase==2 && now>deadline){
     slisk_status("VDA_OWNER_TIMEOUT_CLEANUP");
