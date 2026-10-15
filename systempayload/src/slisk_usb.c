@@ -235,7 +235,10 @@ int slisk_usb_run(void){
    if(log.candidate&&log.candidates==1&&now>=log.first_candidate_ms+200){slisk_status("VDA_ID_SEEN");
     c4fVirtualPadAdopt(&pad,-1,C4F_VDA_USER_SELECT,log.candidate);
     c4fLog("SLISK virtual controller created id=0x%llx: select a different user/guest\n",(unsigned long long)pad.deviceId);
-    phase=2;deadline=now+90000;
+    /* No controller frames before the system confirms a distinct owner.
+       Bound the user-selection experiment; never hold the prompt for 90s. */
+    slisk_status("VDA_WAITING_FOR_OWNER");
+    phase=2;deadline=now+10000;
    }else if(now>deadline){c4fLog("SLISK AddDevice was not confirmed within timeout\n");break;}
   }
   if(phase==2||phase==3){
@@ -244,14 +247,20 @@ int slisk_usb_run(void){
     if(!slisk_owner_allowed(log.owner,first_user)){c4fLog("SLISK same user as DS4; choose guest, stopping\n");break;}
     if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);phase=3;}
    }
-   if(phase==2 && now>deadline){c4fLog("SLISK user selection timeout\n");break;}
+   if(phase==2 && now>deadline){
+    slisk_status("VDA_OWNER_TIMEOUT_CLEANUP");
+    c4fNotify("Slisk: inget kontoval bekraftat; tar bort virtuell kontroll");
+    c4fLog("SLISK virtual owner not confirmed in 10 seconds; removing device\n");break;
+   }
    if(now-last_frame>=16){
     ScePadData d;
     if(phase==3 && state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms<=2500)
        mapped(&f,&d);
     else c4fPadDataNeutral(&d);
-    int32_t rc=c4fVirtualPadInsert(&pad,&d);
-    if(rc!=0){c4fLog("SLISK InsertData returned 0x%08x: neutralize and stop\n",(unsigned)rc);break;}
+    if(phase==3){
+     int32_t rc=c4fVirtualPadInsert(&pad,&d);
+     if(rc!=0){c4fLog("SLISK InsertData returned 0x%08x: neutralize and stop\n",(unsigned)rc);break;}
+    }
     last_frame=now;
    }
   }
