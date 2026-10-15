@@ -20,6 +20,7 @@ int32_t c4fVirtualPadAdd(int32_t id){(void)id;return -1;}
 void c4fVirtualPadAdopt(C4fVirtualPad*p,int32_t a,int32_t b,uint64_t id){(void)a;(void)b;(void)id;p->owned=1;}
 int32_t c4fVirtualPadInsert(const C4fVirtualPad*p,const ScePadData*f){(void)p;(void)f;return 0;}
 void c4fVirtualPadRemove(C4fVirtualPad*p){p->owned=0;}
+int32_t c4fVirtualPadFeedback(const C4fVirtualPad*p,C4fPadFeedback*f){(void)p;memset(f,0,sizeof(*f));return 0;}
 void c4fPadDataNeutral(ScePadData*d){memset(d,0,sizeof(*d));d->lx=d->ly=d->rx=d->ry=128;d->quat[3]=1;}
 int32_t c4fLoginUsers(int32_t ids[4]){for(int i=0;i<4;i++)ids[i]=-1;return 0;}
 int main(void){
