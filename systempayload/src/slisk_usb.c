@@ -210,7 +210,8 @@ int slisk_usb_run(void){
   if(res==XW_PACKET_CONNECTED)slisk_status("XBOX_CONTROLLER_CONNECTED");
   if(res==XW_PACKET_DISCONNECTED){
    c4fLog("SLISK Xbox radio disconnected or idle; continuing to poll receiver\n");
-   slisk_status("XBOX_RADIO_DISCONNECTED_WAITING");
+   static unsigned disconnect_notices=0;
+   if(disconnect_notices++==0)slisk_status("XBOX_RADIO_DISCONNECTED_WAITING");
    if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);(void)c4fVirtualPadInsert(&pad,&neut);c4fVirtualPadRemove(&pad);}
    phase=0;
    continue;
