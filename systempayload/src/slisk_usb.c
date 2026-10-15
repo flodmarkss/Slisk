@@ -283,6 +283,23 @@ int slisk_usb_run(void){
     if(phase==3 && state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms<=2500)
        mapped(&f,&d);
     else c4fPadDataNeutral(&d);
+    /* During login selection, only pass explicit navigation presses.
+     * No sticks, triggers, shoulder buttons or game input until owner verified.
+     * This is an experimental interaction path; the owner timeout remains active. */
+    if(phase==2){
+     c4fPadDataNeutral(&d);
+     if(state.radios[0].has_input && now>=state.radios[0].input_time_ms &&
+        now-state.radios[0].input_time_ms<=2500){
+      uint32_t navigation=f.buttons & (XW_BTN_CROSS|XW_BTN_UP|XW_BTN_DOWN|
+                                      XW_BTN_LEFT|XW_BTN_RIGHT|XW_BTN_PS);
+      d.buttons=ps4_buttons(navigation);
+     }
+     int32_t rc=c4fVirtualPadInsert(&pad,&d);
+     static unsigned pre_owner_reports=0;
+     if(pre_owner_reports<5)c4fLog("SLISK PRE_OWNER_NAV_INSERT rc=0x%08x buttons=0x%08x\n",(unsigned)rc,(unsigned)d.buttons);
+     pre_owner_reports++;
+     if(rc!=0){slisk_status("PRE_OWNER_NAV_REJECTED_CLEANUP");break;}
+    }
     if(phase==3){
      int32_t rc=c4fVirtualPadInsert(&pad,&d);
      if(rc!=0){c4fLog("SLISK InsertData returned 0x%08x: neutralize and stop\n",(unsigned)rc);break;}
