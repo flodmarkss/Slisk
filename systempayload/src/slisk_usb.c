@@ -241,6 +241,13 @@ int slisk_usb_run(void){
    continue;
   }
   XWPadFrame f=xw_frame_for_virtual(&state,0,now);
+  /* Back+Start emergency cancellation works even before account ownership. */
+  if((phase==2||phase==3) && res==XW_PACKET_INPUT &&
+     (f.buttons&(XW_BTN_OPTIONS|XW_BTN_SHARE))==(XW_BTN_OPTIONS|XW_BTN_SHARE)){
+   slisk_status("XBOX_MANUAL_CANCEL_CLEANUP");
+   c4fNotify("Slisk: avbrutet med Back+Start");
+   break;
+  }
   if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
    c4fLog("SLISK Xbox A pressed, starting verified native controller registration\n");
    if(verify_reader(&log)!=0){slisk_status("KLOG_VERIFY_FAILED");break;}
@@ -280,7 +287,7 @@ int slisk_usb_run(void){
    if(phase==2 && now>deadline){
     slisk_status("VDA_OWNER_TIMEOUT_CLEANUP");
     c4fNotify("Slisk: inget kontoval bekraftat; tar bort virtuell kontroll");
-    c4fLog("SLISK virtual owner not confirmed in 10 seconds; removing device\n");break;
+    c4fLog("SLISK virtual owner not confirmed before timeout; removing device\n");break;
    }
    if(now-last_frame>=16){
     ScePadData d;
