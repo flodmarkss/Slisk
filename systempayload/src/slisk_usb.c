@@ -71,10 +71,10 @@ static int usbd_init(Usbd *u){
  return 0;
 }
 static void receiver_close(Receiver *r){if(r->handle){if(r->claimed)r->f.release(r->handle,(int32_t)r->intf);r->f.close(r->handle);}r->handle=NULL;r->claimed=0;}
-static int receiver_open(Receiver *r){
+static int receiver_open(Receiver *r,unsigned channel){
  usb_device **list=NULL;int32_t n=r->f.devices(&list); if(n<=0||!list)return -1;
  for(int32_t i=0;i<n;i++){
-  UsbDevDesc d={0}; UsbConfig *cfg=NULL;int found=0;
+  UsbDevDesc d={0}; UsbConfig *cfg=NULL;int found=0;unsigned matching=0;
   if(r->f.descriptor(list[i],&d)!=0 || !xw_is_supported_receiver(d.idVendor,d.idProduct))continue;
   if(r->f.config(list[i],&cfg)!=0||!cfg)continue;
   if(!cfg->interface){r->f.free_config(cfg);continue;}
@@ -89,7 +89,7 @@ static int receiver_open(Receiver *r){
      const UsbEndDesc *ep=&alt->endpoint[e];if((ep->bmAttributes&3u)!=3u)continue;
      if(ep->bEndpointAddress&0x80u)in=ep->bEndpointAddress;else out=ep->bEndpointAddress;
     }
-    if(in&&out){r->intf=alt->bInterfaceNumber;r->ep_in=in;r->ep_out=out;found=1;}
+    if(in&&out){if(matching++==channel){r->intf=alt->bInterfaceNumber;r->ep_in=in;r->ep_out=out;found=1;}}
    }
   }
   r->f.free_config(cfg);
@@ -108,15 +108,17 @@ static int receiver_open(Receiver *r){
 /* Wireless Xbox 360 player ring command, as documented by Linux xpad.
  * Player 2 uses command 7 (top-right steady). This sends on the already
  * claimed receiver OUT endpoint, and never changes the input path. */
-static void receiver_set_player_two_led(Receiver *r){
+static void receiver_set_player_led(Receiver *r,unsigned player){
  if(!r || !r->handle || !r->claimed || !r->ep_out)return;
- uint8_t packet[12]={0x00,0x00,0x08,0x47,0,0,0,0,0,0,0,0};
+ if(player!=2&&player!=3)return;
+ uint8_t packet[12]={0x00,0x00,0x08,0,0,0,0,0,0,0,0,0};
+ packet[3]=(uint8_t)(0x40u+(player==2?7u:8u));
  int32_t sent=0;
  int32_t rc=r->f.transfer(r->handle,(uint8_t)r->ep_out,packet,
                           (int32_t)sizeof(packet),&sent,100);
- c4fLog("SLISK PLAYER2_LED rc=0x%08x sent=%d command=0x47\n",
-        (unsigned)rc,(int)sent);
- if(rc==0 && sent==(int32_t)sizeof(packet))slisk_status("PLAYER2_LED_SENT");
+ c4fLog("SLISK PLAYER_LED player=%u rc=0x%08x sent=%d command=0x%02x\n",
+        player,(unsigned)rc,(int)sent,(unsigned)packet[3]);
+ if(rc==0 && sent==(int32_t)sizeof(packet))slisk_status(player==2?"PLAYER2_LED_SENT":"PLAYER3_LED_SENT");
  else slisk_status("PLAYER2_LED_WRITE_FAILED");
 }
 /* Xbox 360 wireless force feedback via receiver OUT endpoint.
@@ -132,7 +134,7 @@ static void receiver_set_rumble(Receiver *r,uint8_t large,uint8_t small){
 }
 /* Diagnostic capture is bounded: 24 packets and 8 non-timeout errors.
  * A receiver being enumerated is not proof that controller input reaches us. */
-static XWPacketResult receiver_poll(Receiver *r,XWReceiver *state,uint64_t ms){
+static XWPacketResult receiver_poll(Receiver *r,XWReceiver *state,unsigned slot,uint64_t ms){
  static unsigned samples=0, errors=0;
  uint8_t packet[64]={0};int32_t n=0;
  int32_t rc=r->f.transfer(r->handle,(uint8_t)r->ep_in,packet,sizeof(packet),&n,USB_TIMEOUT_MS);
@@ -145,7 +147,7 @@ static XWPacketResult receiver_poll(Receiver *r,XWReceiver *state,uint64_t ms){
   if(errors++<8)c4fLog("SLISK USB_LENGTH_ERROR n=%d\n",(int)n);
   return XW_PACKET_IGNORED;
  }
- XWPacketResult result=xw_receive(state,0,packet,(size_t)n,ms);
+ XWPacketResult result=xw_receive(state,slot,packet,(size_t)n,ms);
  if(samples<24){
   char line[256];size_t pos=0;unsigned dump=(unsigned)n<32u?(unsigned)n:32u;
   pos+=(size_t)snprintf(line+pos,sizeof(line)-pos,"SLISK USB_PACKET len=%d result=%d hex=",(int)n,(int)result);
@@ -154,7 +156,7 @@ static XWPacketResult receiver_poll(Receiver *r,XWReceiver *state,uint64_t ms){
   c4fLog("%s\n",line);
   samples++;
  }
- if(result==XW_PACKET_INPUT && (state->radios[0].last.buttons&XW_BTN_CROSS)) {
+ if(result==XW_PACKET_INPUT && (state->radios[slot].last.buttons&XW_BTN_CROSS)) {
   static int seen_a=0;
   if(!seen_a++){c4fLog("SLISK USB_A_DECODED len=%d\n",(int)n);slisk_status("XBOX_A_RAW_INPUT_DECODED");}
  }
@@ -310,7 +312,7 @@ int slisk_usb_run(void){
    if(log.owner_seen && phase==2){static int owner_logged=0;if(!owner_logged++){c4fLog("SLISK VDA_OWNER_SEEN owner=0x%08x expected_not=0x%08x\n",(unsigned)log.owner,(unsigned)first_user);}}
    if(log.owner_seen&&log.owner!=0xffffffffu&&log.owner>0xffu){
     if(!slisk_owner_allowed(log.owner,first_user)){c4fLog("SLISK same user as DS4; choose guest, stopping\n");break;}
-    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);phase=3;receiver_set_player_two_led(&rx);}
+    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);phase=3;receiver_set_player_led(&rx,2);}
    }
    if(phase==2 && now>deadline){
     slisk_status("VDA_OWNER_TIMEOUT_CLEANUP");
