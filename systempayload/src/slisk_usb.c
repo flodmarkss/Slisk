@@ -67,10 +67,13 @@ static int receiver_open(Receiver *r){
   UsbDevDesc d={0}; UsbConfig *cfg=NULL;int found=0;
   if(r->f.descriptor(list[i],&d)!=0 || !xw_is_supported_receiver(d.idVendor,d.idProduct))continue;
   if(r->f.config(list[i],&cfg)!=0||!cfg)continue;
+  if(!cfg->interface){r->f.free_config(cfg);continue;}
   for(unsigned j=0;j<cfg->bNumInterfaces&&!found;j++){
    const UsbInterface *ifc=&cfg->interface[j];
+   if(!ifc->altsetting) continue;
    for(int k=0;k<ifc->num_altsetting&&!found;k++){
     const UsbInterfaceDesc *alt=&ifc->altsetting[k];unsigned in=0,out=0;
+    if(!alt->endpoint)continue;
     if(alt->bAlternateSetting||alt->bInterfaceClass!=0xff||alt->bInterfaceSubClass!=0x5d||alt->bInterfaceProtocol!=0x81)continue;
     for(unsigned e=0;e<alt->bNumEndpoints;e++){
      const UsbEndDesc *ep=&alt->endpoint[e];if((ep->bmAttributes&3u)!=3u)continue;
@@ -116,13 +119,16 @@ static void mapped(const XWPadFrame *f,ScePadData *d){
 
 /* A klog read must first show a marker written by this process. Never adopt an
  * old event from before device creation; abort on ambiguous multiple devices. */
-typedef struct {int fd; char line[1024];size_t used;char marker[64];int seen_marker;uint64_t candidate;unsigned candidates;uint32_t owner;int owner_seen;} LogScan;
+typedef struct {int fd; char line[1024];size_t used;char marker[64];int seen_marker;uint64_t candidate;unsigned candidates;uint64_t first_candidate_ms;uint32_t owner;int owner_seen;} LogScan;
 static void handle_line(LogScan *s){
  s->line[s->used]=0;
  if(strstr(s->line,s->marker))s->seen_marker=1;
  if(s->seen_marker&&c4fKlogIsVirtualAdd(s->line)){
   uint64_t id=c4fKlogDeviceId(s->line);
-  if(id && (!s->candidate||s->candidate!=id)){s->candidate=id;s->candidates++;}
+  if(id && (!s->candidate||s->candidate!=id)){
+   if(!s->candidates)s->first_candidate_ms=now_ms();
+   s->candidate=id;s->candidates++;
+  }
  }
  if(s->candidate){
   unsigned long long id=0;unsigned owner=0;
@@ -140,10 +146,11 @@ static void scan(LogScan *s){char b[1024];for(int r=0;r<6;r++){
 }}
 static int verify_reader(LogScan *s){
  s->fd=c4fKlogOpenDevice();if(s->fd<0)return -1;
+ c4fLogSetKlog(0); /* Avoid echoing our own file log into klog reader. */
  /* Flush historical log lines before setting a new marker. */
  for(unsigned i=0;i<20;i++){scan(s);usleep(12000);}
  snprintf(s->marker,sizeof(s->marker),"slisk-unique-%llu",(unsigned long long)now_ms());
- s->candidate=0;s->candidates=0;s->seen_marker=0;
+ s->candidate=0;s->candidates=0;s->first_candidate_ms=0;s->seen_marker=0;
  c4fKlogMark(s->marker);
  uint64_t until=now_ms()+1600;
  while(now_ms()<until){scan(s);if(s->seen_marker)return 0;usleep(10000);}
@@ -160,7 +167,9 @@ int slisk_usb_run(void){
  xw_init(&state);log.fd=-1;
  if(usbd_init(&rx.f)!=0)return 1;
  c4fLog("SLISK Xbox USB backend initialized, waiting for receiver\n");
- if(c4fLoginUsers(before_users)==0)for(int i=0;i<4;i++)if(before_users[i]>0){first_user=before_users[i];break;}
+ int login_rc=c4fLoginUsers(before_users);
+ if(login_rc==0)for(int i=0;i<4;i++)if(before_users[i]>0){first_user=before_users[i];break;}
+ if(login_rc!=0||first_user<=0){c4fLog("SLISK cannot identify the original DS4 owner: refusing VDA and exiting\n");receiver_close(&rx);if(rx.f.library)dlclose(rx.f.library);return 2;}
  while(now_ms()-begun<TEST_MAX_MS){
   uint64_t now=now_ms();
   if(!rx.handle){if(now-last_open>=1000){last_open=now;if(receiver_open(&rx)==0)c4fLog("SLISK USB receiver ready\n");}usleep(25000);continue;}
@@ -174,13 +183,13 @@ int slisk_usb_run(void){
       ID observed after our verified marker decides whether it exists. */
    int32_t rc=c4fVirtualPadAdd(C4F_VDA_USER_SELECT);
    c4fLog("SLISK AddDevice raw status 0x%08x\n",(unsigned)rc);
-   log.candidate=0;log.candidates=0;log.owner_seen=0;
+   log.candidate=0;log.candidates=0;log.first_candidate_ms=0;log.owner_seen=0;
    phase=1;deadline=now+3000;
   }
   if(phase && log.fd>=0)scan(&log);
   if(phase==1){
    if(log.candidates>1){c4fLog("SLISK ambiguous MBus add events: aborting without adopting a device\n");break;}
-   if(log.candidate&&log.candidates==1){
+   if(log.candidate&&log.candidates==1&&now>=log.first_candidate_ms+200){
     c4fVirtualPadAdopt(&pad,-1,C4F_VDA_USER_SELECT,log.candidate);
     c4fLog("SLISK virtual controller created id=0x%llx: select a different user/guest\n",(unsigned long long)pad.deviceId);
     phase=2;deadline=now+90000;
@@ -207,6 +216,7 @@ int slisk_usb_run(void){
  }
  if(pad.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad,&d);c4fVirtualPadRemove(&pad);}
  if(log.fd>=0)close(log.fd);
+ c4fLogSetKlog(1);
  receiver_close(&rx);
  if(rx.f.library)dlclose(rx.f.library);
  c4fLog("SLISK native USB loop exited\n");return 0;
