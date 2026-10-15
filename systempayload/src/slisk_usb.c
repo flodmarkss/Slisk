@@ -266,7 +266,8 @@ int slisk_usb_run(void){
   }
   XWPacketResult res=receiver_poll(&rx,&state,0,now);
   XWPacketResult res2=rx2.handle?receiver_poll(&rx2,&state,1,now):XW_PACKET_IGNORED;
-  XWPadFrame f2=xw_frame_for_virtual(&state,1,now);
+  XWPadFrame f2=state.radios[1].last;
+  if(!state.radios[1].connected || !state.radios[1].has_input || now<state.radios[1].input_time_ms || now-state.radios[1].input_time_ms>2500){memset(&f2,0,sizeof(f2));f2.left_x=f2.left_y=f2.right_x=f2.right_y=128;}
 
   if(res==XW_PACKET_CONNECTED)slisk_status("XBOX_CONTROLLER_CONNECTED");
   if(res==XW_PACKET_DISCONNECTED){
