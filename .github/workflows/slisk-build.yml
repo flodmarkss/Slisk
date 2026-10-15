@@ -1,0 +1,54 @@
+name: Slisk PS4 standalone payload
+on:
+  push:
+    paths:
+      - 'systempayload/**'
+      - '.github/workflows/slisk-build.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recorded Xbox controller report, mapping, and safety guards
+        working-directory: systempayload
+        run: bash tests/run.sh
+  ps4-elf:
+    runs-on: ubuntu-24.04
+    needs: offline-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and pin GPL-3.0 PS4 VDA implementation (source only)
+        working-directory: systempayload
+        run: |
+          git clone https://github.com/MoHadiShibli/Control4Free.git upstream
+          cd upstream
+          git checkout --detach 5a8f9e3d0e75378644e7f7b2df6176c386a24da9
+          test "$(git rev-parse HEAD)" = '5a8f9e3d0e75378644e7f7b2df6176c386a24da9'
+      - name: Rename local VDA logging directory
+        working-directory: systempayload
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('upstream/include/c4f_log.h')
+          s=p.read_text()
+          assert s.count('/data/control4free')==1
+          p.write_text(s.replace('/data/control4free','/data/slisk_x360'))
+          PY
+      - name: Build PS4 payload SDK container
+        working-directory: systempayload
+        run: docker build -t slisk-payload-builder -f upstream/docker/Dockerfile upstream
+      - name: Cross-compile independent Slisk direct-USB ELF
+        working-directory: systempayload
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD:/src" -w /src slisk-payload-builder make -j2
+          file build/slisk-x360-directusb.elf
+      - name: Publish ELF test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: slisk-x360-directusb-ps4-experimental
+          path: systempayload/build/slisk-x360-directusb.elf
+          if-no-files-found: error
