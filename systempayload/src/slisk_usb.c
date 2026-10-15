@@ -247,7 +247,7 @@ int slisk_usb_run(void){
  uint8_t third_large=0,third_small=0;
  int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
  uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0, last_feedback=0;
- uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0;
+ uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0, first_a_armed=1;
  xw_init(&state);log.fd=-1;
  slisk_status("LOOP_ENTERED");if(usbd_init(&rx.f)!=0)return 1;slisk_status("USB_SYMBOLS_OK");int32_t usb_init_rc=rx.f.init();if(usb_init_rc!=0){slisk_status("USB_INIT_FAILED");c4fNotify("Slisk: sceUsbdInit misslyckades");return 3;}slisk_status("USB_INITIALIZED");c4fNotify("Slisk: USB initierat; söker mottagare");
  c4fLog("SLISK Xbox USB backend initialized, waiting for receiver\n");
@@ -302,7 +302,9 @@ int slisk_usb_run(void){
    c4fNotify("Slisk: avbrutet med Back+Start");
    break;
   }
-  if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
+  if(!phase && res==XW_PACKET_INPUT && !(f.buttons&XW_BTN_CROSS))first_a_armed=1;
+  if(!phase && first_a_armed && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){
+   first_a_armed=0;slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
    c4fLog("SLISK Xbox A pressed, starting verified native controller registration\n");
    if(verify_reader(&log)!=0){slisk_status("KLOG_VERIFY_FAILED");break;}
    /* AddDevice status may be nonzero even if device appears: only the MBus
@@ -334,7 +336,16 @@ int slisk_usb_run(void){
   if(phase==2||phase==3){
    if(log.owner_seen && phase==2){static int owner_logged=0;if(!owner_logged++){c4fLog("SLISK VDA_OWNER_SEEN owner=0x%08x expected_not=0x%08x\n",(unsigned)log.owner,(unsigned)first_user);}}
    if(log.owner_seen&&log.owner!=0xffffffffu&&log.owner>0xffu){
-    if(!slisk_owner_allowed(log.owner,first_user)){c4fLog("SLISK same user as DS4; choose guest, stopping\n");break;}
+    if(!slisk_owner_allowed(log.owner,first_user)){
+     slisk_status("PLAYER2_OWNER_CONFLICT_CLEANUP");
+     c4fNotify("Slisk: samma konto som PS4-dosan. Valj Gast eller annat konto och tryck A igen.");
+     c4fLog("SLISK duplicate DS4 owner refused; removing only the rejected virtual pad\n");
+     if(pad.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad,&d);c4fVirtualPadRemove(&pad);}
+     memset(&pad,0,sizeof(pad));
+     log.candidate=0;log.candidates=0;log.first_candidate_ms=0;log.owner_seen=0;
+     phase=0;
+     continue;
+    }
     if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);primary_owner=log.owner;phase=3;receiver_set_player_led(&rx,2);}
    }
    if(phase==2 && now>deadline){
