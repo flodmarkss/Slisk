@@ -221,8 +221,26 @@ int slisk_usb_run(void){
   XWPadFrame f=xw_frame_for_virtual(&state,0,now);
   if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
    c4fLog("SLISK Xbox A pressed, starting verified native controller registration\n");
+   slisk_status("SAFE_USB_BUTTON_TEST_START");
+   c4fNotify("Slisk: USB A OK. Testa B, X, Y, styrkors och spakar");
+   uint64_t test_until=now_ms()+12000;
+   uint32_t previous=f.buttons;
+   unsigned changes=0;
+   while(now_ms()<test_until){
+    XWPacketResult test_result=receiver_poll(&rx,&state,now_ms());
+    if(test_result==XW_PACKET_DISCONNECTED)break;
+    if(test_result==XW_PACKET_INPUT){
+     XWPadFrame current=xw_frame_for_virtual(&state,0,now_ms());
+     if(current.buttons!=previous){
+      if(changes<48)c4fLog("SLISK SAFE_BUTTON_CHANGE index=%u buttons=0x%08x\n",changes,(unsigned)current.buttons);
+      previous=current.buttons;
+      changes++;
+     }
+    }
+   }
+   c4fLog("SLISK SAFE_BUTTON_CHANGES_TOTAL=%u\n",changes);
    slisk_status("SAFE_USB_BUTTON_TEST_COMPLETE");
-   c4fNotify("Slisk: USB A test klar, ingen PS4-kontroll skapad");
+   c4fNotify("Slisk: USB-test klart, ingen virtuell kontroll skapad");
    break;
    if(verify_reader(&log)!=0){slisk_status("KLOG_VERIFY_FAILED");break;}
    /* AddDevice status may be nonzero even if device appears: only the MBus
