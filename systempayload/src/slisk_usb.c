@@ -268,23 +268,32 @@ int slisk_usb_run(void){
   XWPacketResult res=receiver_poll(&rx,&state,0,now);
   XWPacketResult res2=rx2.handle?receiver_poll(&rx2,&state,1,now):XW_PACKET_IGNORED;
   XWPacketResult res3=rx3.handle?receiver_poll(&rx3,&state,2,now):XW_PACKET_IGNORED;
+  if(res2==XW_PACKET_CONNECTED && second_phase==3){
+   receiver_set_player_led(&rx2,3);slisk_status("PLAYER3_RECONNECTED");
+  }
+  if(res3==XW_PACKET_CONNECTED && third_phase==3){
+   receiver_set_player_led(&rx3,4);slisk_status("PLAYER4_RECONNECTED");
+  }
   XWPadFrame f3=state.radios[2].last;
   if(!state.radios[2].connected || !state.radios[2].has_input || now<state.radios[2].input_time_ms || now-state.radios[2].input_time_ms>2500){memset(&f3,0,sizeof(f3));f3.left_x=f3.left_y=f3.right_x=f3.right_y=128;}
   XWPadFrame f2=state.radios[1].last;
   if(!state.radios[1].connected || !state.radios[1].has_input || now<state.radios[1].input_time_ms || now-state.radios[1].input_time_ms>2500){memset(&f2,0,sizeof(f2));f2.left_x=f2.left_y=f2.right_x=f2.right_y=128;}
 
-  if(res==XW_PACKET_CONNECTED)slisk_status("XBOX_CONTROLLER_CONNECTED");
+  if(res==XW_PACKET_CONNECTED){
+   slisk_status("XBOX_CONTROLLER_CONNECTED");
+   if(phase==3){receiver_set_player_led(&rx,2);slisk_status("PLAYER2_RECONNECTED");}
+  }
   if(res==XW_PACKET_DISCONNECTED){
    static unsigned disconnect_notices=0;
    if(disconnect_notices++==0){
     c4fLog("SLISK Xbox radio disconnected or idle; continuing to poll receiver\n");
     slisk_status("XBOX_RADIO_DISCONNECTED_WAITING");
    }
-   if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);(void)c4fVirtualPadInsert(&pad,&neut);c4fVirtualPadRemove(&pad);}
-   /* If player 2 disconnects, stop the experimental two-pad session rather
-      than leave an orphaned player-3 controller or reuse stale klog state. */
-   if(pad2.owned||pad3.owned){slisk_status("PRIMARY_DISCONNECT_EXTRA_PADS_CLEANUP");break;}
-   phase=0;
+   /* Preserve the owned virtual pad across temporary wireless radio loss.
+    * Feed neutral input to release held buttons; new reports resume on reconnect. */
+   if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);(void)c4fVirtualPadInsert(&pad,&neut);}
+   if(last_rumble_large||last_rumble_small){receiver_set_rumble(&rx,0,0);last_rumble_large=last_rumble_small=0;}
+   slisk_status("PLAYER2_RADIO_OFFLINE_KEEPING_VIRTUAL_PAD");
    continue;
   }
   XWPadFrame f=xw_frame_for_virtual(&state,0,now);
@@ -413,7 +422,11 @@ int slisk_usb_run(void){
    if(second_phase==2 && now>second_deadline){slisk_status("PLAYER3_OWNER_TIMEOUT");second_phase=4;}
   }
   if(second_phase==2 || second_phase==3){
-   if(res2==XW_PACKET_DISCONNECTED){slisk_status("PLAYER3_RADIO_DISCONNECTED");second_phase=4;}
+   if(res2==XW_PACKET_DISCONNECTED){
+    slisk_status("PLAYER3_RADIO_OFFLINE_KEEPING_VIRTUAL_PAD");
+    if(pad2.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad2,&d);}
+    if(second_large||second_small){receiver_set_rumble(&rx2,0,0);second_large=second_small=0;}
+   }
    if(second_phase==2 && now-second_frame>=16){
     ScePadData d;c4fPadDataNeutral(&d);
     if(!(f2.buttons&XW_BTN_CROSS))second_a_released=1;
@@ -492,7 +505,11 @@ int slisk_usb_run(void){
    if(third_phase==2 && now>third_deadline){slisk_status("PLAYER4_OWNER_TIMEOUT");third_phase=4;}
   }
   if(third_phase==2||third_phase==3){
-   if(res3==XW_PACKET_DISCONNECTED){slisk_status("PLAYER4_RADIO_DISCONNECTED");third_phase=4;}
+   if(res3==XW_PACKET_DISCONNECTED){
+    slisk_status("PLAYER4_RADIO_OFFLINE_KEEPING_VIRTUAL_PAD");
+    if(pad3.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad3,&d);}
+    if(third_large||third_small){receiver_set_rumble(&rx3,0,0);third_large=third_small=0;}
+   }
    if(third_phase==2 && now-third_frame>=16){
     ScePadData d;c4fPadDataNeutral(&d);
     if(!(f3.buttons&XW_BTN_CROSS))third_a_released=1;
