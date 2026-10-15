@@ -7,7 +7,7 @@ else
 $(error PS4_PAYLOAD_SDK is undefined; see .github/workflows/build.yml)
 endif
 OUT := build/slisk-x360-directusb.elf
-CC_CFLAGS := -std=gnu11 -O2 -Wall -Wextra -Wno-unused-parameter -I./src -Iupstream/include -DC4F_VERSION='"slisk-0.9.0"'
+CC_CFLAGS := -std=gnu11 -O2 -Wall -Wextra -Wno-unused-parameter -I./src -Iupstream/include -DC4F_VERSION='"slisk-0.9.1"'
 SRCS := src/main.c src/slisk_usb.c src/xw_core.c upstream/src/log.c upstream/src/vda.c upstream/src/klog_line.c upstream/src/feedback.c
 OBJS := $(patsubst %.c,build/%.o,$(SRCS))
 CFLAGS += $(CC_CFLAGS)
