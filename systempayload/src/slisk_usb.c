@@ -45,14 +45,19 @@ typedef struct {
 } Usbd;
 typedef struct { Usbd f; usb_handle *handle; unsigned intf,ep_in,ep_out; int claimed; } Receiver;
 
+static void slisk_status(const char *stage){
+ int fd=open("/data/slisk-v092-status.txt",O_WRONLY|O_CREAT|O_APPEND,0666);
+ if(fd>=0){(void)write(fd,stage,strlen(stage));(void)write(fd,"\n",1);(void)close(fd);}
+ c4fLog("SLISK STAGE: %s\n",stage);
+}
 static uint64_t now_ms(void){ struct timespec ts={0}; clock_gettime(CLOCK_MONOTONIC,&ts); return (uint64_t)ts.tv_sec*1000u + (uint64_t)ts.tv_nsec/1000000u; }
 static int symbol(void *h,const char *name,void *out){void *p=dlsym(h,name); if(!p)return -1; memcpy(out,&p,sizeof(p));return 0;}
-#define GETSYM(name,field) do{if(symbol(u->library,name,&u->field)){c4fLog("SLISK missing %s\n",name);return -1;}}while(0)
+#define GETSYM(name,field) do{if(symbol(u->library,name,&u->field)){slisk_status("USB_SYMBOL_MISSING: " name);c4fNotify("Slisk: USB-funktion saknas, stoppar");return -1;}}while(0)
 static int usbd_init(Usbd *u){
  static const char *paths[]={"/system/common/lib/libSceUsbd.sprx","libSceUsbd.sprx","libSceUsbd"};
  memset(u,0,sizeof(*u));
  for(size_t i=0;i<sizeof(paths)/sizeof(paths[0]);i++){u->library=dlopen(paths[i],RTLD_NOW|RTLD_GLOBAL);if(u->library)break;}
- if(!u->library){c4fLog("SLISK libSceUsbd not available; stopping safely\n");return -1;}
+ if(!u->library){slisk_status("USB_LIBRARY_MISSING");c4fNotify("Slisk: libSceUsbd saknas, stoppar");return -1;}
  GETSYM("sceUsbdGetDeviceList",devices); GETSYM("sceUsbdFreeDeviceList",free_devices);
  GETSYM("sceUsbdGetDeviceDescriptor",descriptor); GETSYM("sceUsbdGetActiveConfigDescriptor",config);
  GETSYM("sceUsbdFreeConfigDescriptor",free_config); GETSYM("sceUsbdOpen",open);
@@ -163,33 +168,33 @@ static int slisk_owner_allowed(uint32_t owner,int32_t ds4){
 int slisk_usb_run(void){
  Receiver rx={0};XWReceiver state; C4fVirtualPad pad={0};LogScan log={0};
  int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
- uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0;int phase=0;
+ uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0;int phase=0, missing_alerted=0;
  xw_init(&state);log.fd=-1;
- if(usbd_init(&rx.f)!=0)return 1;
+ slisk_status("LOOP_ENTERED");if(usbd_init(&rx.f)!=0)return 1;slisk_status("USB_SYMBOLS_OK");c4fNotify("Slisk: USB-bibliotek laddat; söker mottagare");
  c4fLog("SLISK Xbox USB backend initialized, waiting for receiver\n");
  int login_rc=c4fLoginUsers(before_users);
  if(login_rc==0)for(int i=0;i<4;i++)if(before_users[i]>0){first_user=before_users[i];break;}
- if(login_rc!=0||first_user<=0){c4fLog("SLISK cannot identify the original DS4 owner: refusing VDA and exiting\n");receiver_close(&rx);if(rx.f.library)dlclose(rx.f.library);return 2;}
+ if(login_rc!=0||first_user<=0){slisk_status("NO_DS4_OWNER");c4fNotify("Slisk: kan inte hitta DS4-anvandare, stoppar");receiver_close(&rx);if(rx.f.library)dlclose(rx.f.library);return 2;}
  while(now_ms()-begun<TEST_MAX_MS){
   uint64_t now=now_ms();
-  if(!rx.handle){if(now-last_open>=1000){last_open=now;if(receiver_open(&rx)==0)c4fLog("SLISK USB receiver ready\n");}usleep(25000);continue;}
+  if(!rx.handle){if(!missing_alerted && now-begun>=15000){missing_alerted=1;slisk_status("USB_RECEIVER_NOT_FOUND_15S");c4fNotify("Slisk: ingen Xbox-mottagare efter 15 sekunder");}if(now-last_open>=1000){last_open=now;if(receiver_open(&rx)==0){slisk_status("USB_RECEIVER_READY");c4fNotify("Slisk: Xbox-mottagare hittad, tryck A");}}usleep(25000);continue;}
   XWPacketResult res=receiver_poll(&rx,&state,now);
   if(res==XW_PACKET_DISCONNECTED){c4fLog("SLISK Xbox disconnected\n");if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);c4fVirtualPadInsert(&pad,&neut);c4fVirtualPadRemove(&pad);}phase=0;break;}
   XWPadFrame f=xw_frame_for_virtual(&state,0,now);
-  if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){
+  if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
    c4fLog("SLISK Xbox A pressed, starting verified native controller registration\n");
-   if(verify_reader(&log)!=0)break;
+   if(verify_reader(&log)!=0){slisk_status("KLOG_VERIFY_FAILED");break;}
    /* AddDevice status may be nonzero even if device appears: only the MBus
       ID observed after our verified marker decides whether it exists. */
    int32_t rc=c4fVirtualPadAdd(C4F_VDA_USER_SELECT);
    c4fLog("SLISK AddDevice raw status 0x%08x\n",(unsigned)rc);
    log.candidate=0;log.candidates=0;log.first_candidate_ms=0;log.owner_seen=0;
-   phase=1;deadline=now+3000;
+   slisk_status("VDA_ADD_CALLED");phase=1;deadline=now+3000;
   }
   if(phase && log.fd>=0)scan(&log);
   if(phase==1){
    if(log.candidates>1){c4fLog("SLISK ambiguous MBus add events: aborting without adopting a device\n");break;}
-   if(log.candidate&&log.candidates==1&&now>=log.first_candidate_ms+200){
+   if(log.candidate&&log.candidates==1&&now>=log.first_candidate_ms+200){slisk_status("VDA_ID_SEEN");
     c4fVirtualPadAdopt(&pad,-1,C4F_VDA_USER_SELECT,log.candidate);
     c4fLog("SLISK virtual controller created id=0x%llx: select a different user/guest\n",(unsigned long long)pad.deviceId);
     phase=2;deadline=now+90000;
