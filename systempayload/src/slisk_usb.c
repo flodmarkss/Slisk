@@ -119,6 +119,17 @@ static void receiver_set_player_two_led(Receiver *r){
  if(rc==0 && sent==(int32_t)sizeof(packet))slisk_status("PLAYER2_LED_SENT");
  else slisk_status("PLAYER2_LED_WRITE_FAILED");
 }
+/* Xbox 360 wireless force feedback via receiver OUT endpoint.
+ * Linux xpad uses these exact twelve bytes with two motor intensities. */
+static void receiver_set_rumble(Receiver *r,uint8_t large,uint8_t small){
+ if(!r || !r->handle || !r->claimed || !r->ep_out)return;
+ uint8_t pkt[12]={0x00,0x01,0x0f,0xc0,0x00,large,small,0,0,0,0,0};
+ int32_t sent=0;
+ int32_t rc=r->f.transfer(r->handle,(uint8_t)r->ep_out,pkt,12,&sent,100);
+ static unsigned messages=0;
+ if(messages++<12)c4fLog("SLISK RUMBLE_WRITE rc=0x%08x sent=%d large=%u small=%u\n",
+                          (unsigned)rc,(int)sent,(unsigned)large,(unsigned)small);
+}
 /* Diagnostic capture is bounded: 24 packets and 8 non-timeout errors.
  * A receiver being enumerated is not proof that controller input reaches us. */
 static XWPacketResult receiver_poll(Receiver *r,XWReceiver *state,uint64_t ms){
@@ -234,7 +245,8 @@ static int slisk_owner_allowed(uint32_t owner,int32_t ds4){
 int slisk_usb_run(void){
  Receiver rx={0};XWReceiver state; C4fVirtualPad pad={0};LogScan log={0};
  int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
- uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0;int phase=0, missing_alerted=0;
+ uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0, last_feedback=0;
+ uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0;
  xw_init(&state);log.fd=-1;
  slisk_status("LOOP_ENTERED");if(usbd_init(&rx.f)!=0)return 1;slisk_status("USB_SYMBOLS_OK");int32_t usb_init_rc=rx.f.init();if(usb_init_rc!=0){slisk_status("USB_INIT_FAILED");c4fNotify("Slisk: sceUsbdInit misslyckades");return 3;}slisk_status("USB_INITIALIZED");c4fNotify("Slisk: USB initierat; söker mottagare");
  c4fLog("SLISK Xbox USB backend initialized, waiting for receiver\n");
@@ -305,6 +317,19 @@ int slisk_usb_run(void){
     c4fNotify("Slisk: inget kontoval bekraftat; tar bort virtuell kontroll");
     c4fLog("SLISK virtual owner not confirmed in 30 seconds; removing device\n");break;
    }
+   if(phase==3 && now-last_feedback>=100){
+    last_feedback=now;
+    C4fPadFeedback feedback={0};
+    int32_t fb_rc=c4fVirtualPadFeedback(&pad,&feedback);
+    static unsigned feedback_failures=0, feedback_successes=0;
+    if(fb_rc==0){
+     if(feedback_successes++==0)slisk_status("RUMBLE_FEEDBACK_AVAILABLE");
+     if(feedback.large!=last_rumble_large || feedback.small!=last_rumble_small){
+      receiver_set_rumble(&rx,feedback.large,feedback.small);
+      last_rumble_large=feedback.large;last_rumble_small=feedback.small;
+     }
+    }else if(feedback_failures++<4)c4fLog("SLISK RUMBLE_FEEDBACK_ERROR rc=0x%08x\n",(unsigned)fb_rc);
+   }
    if(now-last_frame>=16){
     ScePadData d;
     if(phase==3 && state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms<=2500)
@@ -334,6 +359,7 @@ int slisk_usb_run(void){
   }
   if(phase==3 && res==XW_PACKET_INPUT && ((f.buttons&(XW_BTN_OPTIONS|XW_BTN_SHARE))==(XW_BTN_OPTIONS|XW_BTN_SHARE))){c4fLog("SLISK start+back requested shutdown\n");break;}
  }
+ if(last_rumble_large||last_rumble_small)receiver_set_rumble(&rx,0,0);
  if(pad.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad,&d);c4fVirtualPadRemove(&pad);}
  if(log.fd>=0)close(log.fd);
  c4fLogSetKlog(1);
