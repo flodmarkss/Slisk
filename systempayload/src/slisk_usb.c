@@ -221,6 +221,9 @@ int slisk_usb_run(void){
   XWPadFrame f=xw_frame_for_virtual(&state,0,now);
   if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
    c4fLog("SLISK Xbox A pressed, starting verified native controller registration\n");
+   slisk_status("SAFE_USB_BUTTON_TEST_COMPLETE");
+   c4fNotify("Slisk: USB A test klar, ingen PS4-kontroll skapad");
+   break;
    if(verify_reader(&log)!=0){slisk_status("KLOG_VERIFY_FAILED");break;}
    /* AddDevice status may be nonzero even if device appears: only the MBus
       ID observed after our verified marker decides whether it exists. */
