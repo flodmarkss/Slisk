@@ -19,7 +19,9 @@
 
 #define MAX_RADIOS 4
 #define USB_TIMEOUT_MS 12
-#define TEST_MAX_MS (8u*60u*1000u)
+#define TEST_MAX_MS (20u*60u*1000u)
+#define OWNER_SELECT_TIMEOUT_MS 30000u
+#define USB_IDLE_SHUTDOWN_MS 120000u
 
 /* libusb 1.0 USB descriptor ABI (used by libSceUsbd). */
 typedef struct usb_device usb_device;
@@ -274,11 +276,11 @@ int slisk_usb_run(void){
       c4fLog("SLISK PRE_OWNER_NEUTRAL_INSERT_RC=0x%08x\n",(unsigned)probe_rc);
       if(probe_rc!=0){slisk_status("PRE_OWNER_NEUTRAL_REJECTED_CLEANUP");break;}
       slisk_status("PRE_OWNER_NEUTRAL_ACCEPTED_WAIT_OWNER"); }
-    phase=2;deadline=now_ms()+8000;
+    phase=2;deadline=now_ms()+OWNER_SELECT_TIMEOUT_MS;
    }else if(now>deadline){c4fLog("SLISK AddDevice was not confirmed within timeout\n");break;}
   }
   if(phase==2||phase==3){
-   if(state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms>30000){c4fLog("SLISK USB input silent 30s; stopping\n");break;}
+   if(state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms>USB_IDLE_SHUTDOWN_MS){c4fLog("SLISK USB input silent 120s; stopping\n");break;}
    if(log.owner_seen && phase==2){static int owner_logged=0;if(!owner_logged++){c4fLog("SLISK VDA_OWNER_SEEN owner=0x%08x expected_not=0x%08x\n",(unsigned)log.owner,(unsigned)first_user);}}
    if(log.owner_seen&&log.owner!=0xffffffffu&&log.owner>0xffu){
     if(!slisk_owner_allowed(log.owner,first_user)){c4fLog("SLISK same user as DS4; choose guest, stopping\n");break;}
@@ -287,7 +289,7 @@ int slisk_usb_run(void){
    if(phase==2 && now>deadline){
     slisk_status("VDA_OWNER_TIMEOUT_CLEANUP");
     c4fNotify("Slisk: inget kontoval bekraftat; tar bort virtuell kontroll");
-    c4fLog("SLISK virtual owner not confirmed before timeout; removing device\n");break;
+    c4fLog("SLISK virtual owner not confirmed in 30 seconds; removing device\n");break;
    }
    if(now-last_frame>=16){
     ScePadData d;
