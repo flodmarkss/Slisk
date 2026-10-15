@@ -63,6 +63,16 @@ int main(void){
  assert(xw_receive(&pair,0,release,sizeof(release),210)==XW_PACKET_INPUT);
  assert((xw_frame_for_virtual(&pair,0,210).buttons&XW_BTN_CROSS)==0);
  assert((xw_frame_for_virtual(&pair,1,210).buttons&XW_BTN_CROSS)!=0);
+ /* Reconnect on the same radio slot: buttons clear on disconnect and work again. */
+ const uint8_t off[]={0x08,0x00};
+ const uint8_t on[]={0x08,0x80};
+ assert(xw_receive(&pair,1,off,sizeof(off),300)==XW_PACKET_DISCONNECTED);
+ assert(pair.radios[1].connected==0 && pair.radios[1].has_input==0);
+ assert(xw_receive(&pair,1,on,sizeof(on),400)==XW_PACKET_CONNECTED);
+ assert(pair.radios[1].connected==1 && pair.radios[1].has_input==0);
+ assert(xw_receive(&pair,1,press,sizeof(press),450)==XW_PACKET_INPUT);
+ assert((pair.radios[1].last.buttons&XW_BTN_CROSS)!=0);
+ assert((pair.radios[0].last.buttons&XW_BTN_CROSS)==0);
  puts("Slisk recorded Xbox USB -> virtual PS4 sample & owner guards: PASS");
  return 0;
 }
