@@ -37,6 +37,10 @@ jobs:
           assert s.count('/data/control4free')==1
           p.write_text(s.replace('/data/control4free','/data/slisk_x360'))
           PY
+      - name: Use Ubuntu registry mirror when upstream registry is rate-limited
+        working-directory: systempayload
+        run: |
+          sed -i -E 's|public.ecr.aws/docker/library/ubuntu:24.04@sha256:[0-9a-f]+|mirror.gcr.io/library/ubuntu:24.04|' upstream/docker/Dockerfile
       - name: Build PS4 payload SDK container
         working-directory: systempayload
         run: docker build -t slisk-payload-builder -f upstream/docker/Dockerfile upstream
