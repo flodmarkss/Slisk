@@ -49,7 +49,12 @@ int main(void){
  int32_t rc=sceUserServiceInitialize(NULL);
  c4fLog("SLISK UserService init=0x%08x\n",(unsigned)rc);
  if(c4fMbusInit()!=0){c4fLog("SLISK could not load Mbus: no Pad API touched\n");goto done;}
- if(c4fPadInit()!=0){c4fLog("SLISK Pad init refused: abort\n");goto done;}
+ int32_t pad_rc=scePadInit();
+ c4fLog("SLISK Pad init=0x%08x\n",(unsigned)pad_rc);
+ if(pad_rc!=0)goto done;
+ pad_rc=scePadSetProcessPrivilege(1);
+ c4fLog("SLISK Pad privilege=0x%08x\n",(unsigned)pad_rc);
+ if(pad_rc!=0)goto done;
  c4fNotify("Slisk Xbox direct USB: connect receiver, press Xbox A");
  ret=slisk_usb_run();
  done:
