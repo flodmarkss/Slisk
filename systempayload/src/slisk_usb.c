@@ -142,6 +142,10 @@ static uint32_t ps4_buttons(uint32_t b){
  for(size_t i=0;i<sizeof(m)/sizeof(m[0]);i++) { if(b&m[i].from)out|=m[i].to; }
  return out;
 }
+static uint32_t slisk_pre_owner_buttons(uint32_t buttons){
+ return ps4_buttons(buttons & (XW_BTN_CROSS|XW_BTN_UP|XW_BTN_DOWN|
+                              XW_BTN_LEFT|XW_BTN_RIGHT|XW_BTN_PS));
+}
 static void mapped(const XWPadFrame *f,ScePadData *d){
  c4fPadDataNeutral(d); if(!f)return;
  d->buttons=ps4_buttons(f->buttons); d->lx=f->left_x;d->ly=f->left_y;
@@ -290,9 +294,7 @@ int slisk_usb_run(void){
      c4fPadDataNeutral(&d);
      if(state.radios[0].has_input && now>=state.radios[0].input_time_ms &&
         now-state.radios[0].input_time_ms<=2500){
-      uint32_t navigation=f.buttons & (XW_BTN_CROSS|XW_BTN_UP|XW_BTN_DOWN|
-                                      XW_BTN_LEFT|XW_BTN_RIGHT|XW_BTN_PS);
-      d.buttons=ps4_buttons(navigation);
+      d.buttons=slisk_pre_owner_buttons(f.buttons);
      }
      int32_t rc=c4fVirtualPadInsert(&pad,&d);
      static unsigned pre_owner_reports=0;
@@ -318,6 +320,7 @@ int slisk_usb_run(void){
  c4fLog("SLISK native USB loop exited\n");return 0;
 }
 #ifdef SLISK_TEST
+uint32_t slisk_test_pre_owner_buttons(uint32_t b){return slisk_pre_owner_buttons(b);}
 int slisk_test_owner_event(const char *line,uint64_t candidate,uint32_t *out_owner){
  LogScan scan_state={0};
  scan_state.candidate=candidate;
