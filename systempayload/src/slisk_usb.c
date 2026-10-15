@@ -111,11 +111,11 @@ static XWPacketResult receiver_poll(Receiver *r,XWReceiver *state,uint64_t ms){
  int32_t rc=r->f.transfer(r->handle,(uint8_t)r->ep_in,packet,sizeof(packet),&n,USB_TIMEOUT_MS);
  if(rc!=0){
   /* libusb-style timeout is -7. Record a few other failures only. */
-  if(rc!=-7 && errors++<8) c4fLog("SLISK USB_TRANSFER_ERROR rc=%d n=%d ep=0x%02x\\n",(int)rc,(int)n,r->ep_in);
+  if(rc!=-7 && errors++<8) c4fLog("SLISK USB_TRANSFER_ERROR rc=%d n=%d ep=0x%02x\n",(int)rc,(int)n,r->ep_in);
   return XW_PACKET_IGNORED;
  }
  if(n<=0||(size_t)n>sizeof(packet)){
-  if(errors++<8)c4fLog("SLISK USB_LENGTH_ERROR n=%d\\n",(int)n);
+  if(errors++<8)c4fLog("SLISK USB_LENGTH_ERROR n=%d\n",(int)n);
   return XW_PACKET_IGNORED;
  }
  XWPacketResult result=xw_receive(state,0,packet,(size_t)n,ms);
@@ -124,11 +124,13 @@ static XWPacketResult receiver_poll(Receiver *r,XWReceiver *state,uint64_t ms){
   pos+=(size_t)snprintf(line+pos,sizeof(line)-pos,"SLISK USB_PACKET len=%d result=%d hex=",(int)n,(int)result);
   for(unsigned i=0;i<dump && pos+4<sizeof(line);i++)
    pos+=(size_t)snprintf(line+pos,sizeof(line)-pos,"%02x",packet[i]);
-  c4fLog("%s\\n",line);
+  c4fLog("%s\n",line);
   samples++;
  }
- if(result==XW_PACKET_INPUT && (state->radios[0].last.buttons&XW_BTN_CROSS))
-  c4fLog("SLISK USB_A_DECODED len=%d\\n",(int)n);
+ if(result==XW_PACKET_INPUT && (state->radios[0].last.buttons&XW_BTN_CROSS)) {
+  static int seen_a=0;
+  if(!seen_a++){c4fLog("SLISK USB_A_DECODED len=%d\n",(int)n);slisk_status("XBOX_A_RAW_INPUT_DECODED");}
+ }
  return result;
 }
 static uint32_t ps4_buttons(uint32_t b){
