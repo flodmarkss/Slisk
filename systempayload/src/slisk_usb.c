@@ -415,7 +415,7 @@ int slisk_usb_run(void){
     if(!(f2.buttons&XW_BTN_CROSS))second_a_released=1;
     if(state.radios[1].has_input && now>=state.radios[1].input_time_ms &&
        now-state.radios[1].input_time_ms<=2500)
-     d.buttons=slisk_pre_owner_buttons(f2.buttons & (second_a_released?~0u:~XW_BTN_CROSS));
+     d.buttons=slisk_pre_owner_buttons(f2.buttons & (second_a_released?~0u:~(uint32_t)XW_BTN_CROSS));
     if(c4fVirtualPadInsert(&pad2,&d)!=0){second_phase=4;slisk_status("PLAYER3_NAV_FAILED");}
     second_frame=now;
    }
