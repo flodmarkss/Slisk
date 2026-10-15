@@ -19,9 +19,7 @@
 
 #define MAX_RADIOS 4
 #define USB_TIMEOUT_MS 12
-#define TEST_MAX_MS (20u*60u*1000u)
 #define OWNER_SELECT_TIMEOUT_MS 30000u
-#define USB_IDLE_SHUTDOWN_MS 120000u
 
 /* libusb 1.0 USB descriptor ABI (used by libSceUsbd). */
 typedef struct usb_device usb_device;
@@ -256,7 +254,7 @@ int slisk_usb_run(void){
  int login_rc=c4fLoginUsers(before_users);
  if(login_rc==0)for(int i=0;i<4;i++)if(before_users[i]>0){first_user=before_users[i];break;}
  if(login_rc!=0||first_user<=0){slisk_status("NO_DS4_OWNER");c4fNotify("Slisk: kan inte hitta DS4-anvandare, stoppar");receiver_close(&rx);if(rx.f.exit)(void)rx.f.exit();if(rx.f.library)dlclose(rx.f.library);return 2;}
- while(now_ms()-begun<TEST_MAX_MS){
+ while(1){
   uint64_t now=now_ms();
   if(!rx.handle){if(!missing_alerted && now-begun>=15000){missing_alerted=1;slisk_status("USB_RECEIVER_NOT_FOUND_15S");c4fNotify("Slisk: ingen Xbox-mottagare efter 15 sekunder");}if(now-last_open>=1000){last_open=now;if(receiver_open(&rx,0)==0){slisk_status("USB_RECEIVER_READY");c4fNotify("Slisk: USB-mottagare hittad; paketdiagnostik aktiv, tryck A");}}usleep(25000);continue;}
   if(!rx2.handle && now-second_open>=3000){
@@ -334,7 +332,6 @@ int slisk_usb_run(void){
    }else if(now>deadline){c4fLog("SLISK AddDevice was not confirmed within timeout\n");break;}
   }
   if(phase==2||phase==3){
-   if(state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms>USB_IDLE_SHUTDOWN_MS){c4fLog("SLISK USB input silent 120s; stopping\n");break;}
    if(log.owner_seen && phase==2){static int owner_logged=0;if(!owner_logged++){c4fLog("SLISK VDA_OWNER_SEEN owner=0x%08x expected_not=0x%08x\n",(unsigned)log.owner,(unsigned)first_user);}}
    if(log.owner_seen&&log.owner!=0xffffffffu&&log.owner>0xffu){
     if(!slisk_owner_allowed(log.owner,first_user)){c4fLog("SLISK same user as DS4; choose guest, stopping\n");break;}
