@@ -246,7 +246,7 @@ static int slisk_owner_allowed(uint32_t owner,int32_t ds4){
 }
 int slisk_usb_run(void){
  Receiver rx={0},rx2={0};XWReceiver state; C4fVirtualPad pad={0},pad2={0};LogScan log={0};
- int second_phase=0,second_attempted=0;uint64_t second_deadline=0,second_frame=0,second_feedback=0,second_open=0;
+ int second_phase=0,second_attempted=0,second_a_released=0,second_conflict_seen=0;uint64_t second_deadline=0,second_frame=0,second_feedback=0,second_open=0;
  uint32_t primary_owner=0;uint8_t second_large=0,second_small=0;
  int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
  uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0, last_feedback=0;
@@ -397,21 +397,25 @@ int slisk_usb_run(void){
   if(second_phase==2){
    if(log.owner_seen){
     if(!slisk_owner_allowed(log.owner,first_user) || log.owner==primary_owner){
-     slisk_status("PLAYER3_OWNER_CONFLICT");second_phase=4;
+     if(!second_conflict_seen++){slisk_status("PLAYER3_OWNER_CONFLICT_WAITING_FOR_DISTINCT_USER");c4fNotify("Slisk: spelare 3 maste valja ANNAN anvandare eller Gast");}
+     /* Keep the virtual device alive for the remaining selection window.
+        A duplicate owner must NEVER receive normal gameplay reports. */
     }else{
      second_phase=3;
      c4fLog("SLISK PLAYER3_OWNER=0x%08x\n",log.owner);
      receiver_set_player_led(&rx2,3);
     }
-   }else if(now>second_deadline){slisk_status("PLAYER3_OWNER_TIMEOUT");second_phase=4;}
+   }
+   if(second_phase==2 && now>second_deadline){slisk_status("PLAYER3_OWNER_TIMEOUT");second_phase=4;}
   }
   if(second_phase==2 || second_phase==3){
    if(res2==XW_PACKET_DISCONNECTED){slisk_status("PLAYER3_RADIO_DISCONNECTED");second_phase=4;}
    if(second_phase==2 && now-second_frame>=16){
     ScePadData d;c4fPadDataNeutral(&d);
+    if(!(f2.buttons&XW_BTN_CROSS))second_a_released=1;
     if(state.radios[1].has_input && now>=state.radios[1].input_time_ms &&
        now-state.radios[1].input_time_ms<=2500)
-     d.buttons=slisk_pre_owner_buttons(f2.buttons);
+     d.buttons=slisk_pre_owner_buttons(f2.buttons & (second_a_released?~0u:~XW_BTN_CROSS));
     if(c4fVirtualPadInsert(&pad2,&d)!=0){second_phase=4;slisk_status("PLAYER3_NAV_FAILED");}
     second_frame=now;
    }
