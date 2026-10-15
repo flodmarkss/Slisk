@@ -552,6 +552,10 @@ int slisk_usb_run(void){
   }
   if(phase==3 && res==XW_PACKET_INPUT && ((f.buttons&(XW_BTN_OPTIONS|XW_BTN_SHARE))==(XW_BTN_OPTIONS|XW_BTN_SHARE))){c4fLog("SLISK start+back requested shutdown\n");break;}
  }
+ /* Always release all three virtual PS4 devices on exit, even if a radio is offline. */
+ slisk_status("CLEANUP_ALL_VIRTUAL_PADS");
+ if(third_large||third_small)receiver_set_rumble(&rx3,0,0);
+ if(pad3.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad3,&d);c4fVirtualPadRemove(&pad3);}
  if(second_large||second_small)receiver_set_rumble(&rx2,0,0);
  if(pad2.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad2,&d);c4fVirtualPadRemove(&pad2);}
  if(last_rumble_large||last_rumble_small)receiver_set_rumble(&rx,0,0);
