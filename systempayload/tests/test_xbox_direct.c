@@ -8,6 +8,7 @@
 void slisk_test_map_frame(const XWPadFrame*,ScePadData*);
 int slisk_test_owner_allowed(uint32_t,int32_t);
 int slisk_test_owner_event(const char*,uint64_t,uint32_t*);
+uint32_t slisk_test_pre_owner_buttons(uint32_t);
 void c4fLog(const char*fmt,...){(void)fmt;}
 void c4fNotify(const char*fmt,...){(void)fmt;}
 void c4fLogSetKlog(int enabled){(void)enabled;}
@@ -43,6 +44,11 @@ int main(void){
  assert(parsed==0x18400002u);
  assert(!slisk_test_owner_event("<118> DEVICE_OWNER_CHANGED [DeviceId:0x9030d][UserId:0x18400001]",0xa030d,&parsed));
  assert(!slisk_test_owner_event("<118> SCE_MBUS_EVENT_DEVICE_ADDED [DeviceId:0xa030d][subType:2]",0xa030d,&parsed));
+ assert(slisk_test_pre_owner_buttons(XW_BTN_CROSS)==0x4000u);
+ assert(slisk_test_pre_owner_buttons(XW_BTN_PS)==0x10000u);
+ assert(slisk_test_pre_owner_buttons(XW_BTN_UP)==0x10u);
+ assert(slisk_test_pre_owner_buttons(XW_BTN_CIRCLE|XW_BTN_TRIANGLE|XW_BTN_L1)==0u);
+ assert(slisk_test_pre_owner_buttons(XW_BTN_CROSS|XW_BTN_CIRCLE)==0x4000u);
  puts("Slisk recorded Xbox USB -> virtual PS4 sample & owner guards: PASS");
  return 0;
 }
