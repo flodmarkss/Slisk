@@ -155,6 +155,14 @@ static void mapped(const XWPadFrame *f,ScePadData *d){
 typedef struct {int fd; char line[1024];size_t used;char marker[64];int seen_marker;uint64_t candidate;unsigned candidates;uint64_t first_candidate_ms;uint32_t owner;int owner_seen;} LogScan;
 static void handle_line(LogScan *s){
  s->line[s->used]=0;
+ /* Capture only relevant MBus lifecycle events, bounded to 32 lines.
+  * No general kernel logging or account names. */
+ if(s->seen_marker && (strstr(s->line,"DEVICE_OWNER_CHANGED") ||
+                       strstr(s->line,"DEVICE_ADDED") ||
+                       strstr(s->line,"DEVICE_REMOVED"))) {
+  static unsigned trace_count=0;
+  if(trace_count++<32)c4fLog("SLISK VDA_KLOG_EVENT %.220s\n",s->line);
+ }
  if(strstr(s->line,s->marker))s->seen_marker=1;
  if(s->seen_marker&&c4fKlogIsVirtualAdd(s->line)){
   uint64_t id=c4fKlogDeviceId(s->line);
@@ -250,6 +258,7 @@ int slisk_usb_run(void){
   }
   if(phase==2||phase==3){
    if(state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms>30000){c4fLog("SLISK USB input silent 30s; stopping\n");break;}
+   if(log.owner_seen && phase==2)c4fLog("SLISK VDA_OWNER_SEEN owner=0x%08x expected_not=0x%08x\n",(unsigned)log.owner,(unsigned)first_user);
    if(log.owner_seen&&log.owner!=0xffffffffu&&log.owner>0xffu){
     if(!slisk_owner_allowed(log.owner,first_user)){c4fLog("SLISK same user as DS4; choose guest, stopping\n");break;}
     if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);phase=3;}
