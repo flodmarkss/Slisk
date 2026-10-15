@@ -110,15 +110,15 @@ static int receiver_open(Receiver *r,unsigned channel){
  * claimed receiver OUT endpoint, and never changes the input path. */
 static void receiver_set_player_led(Receiver *r,unsigned player){
  if(!r || !r->handle || !r->claimed || !r->ep_out)return;
- if(player!=2&&player!=3)return;
+ if(player<2||player>4)return;
  uint8_t packet[12]={0x00,0x00,0x08,0,0,0,0,0,0,0,0,0};
- packet[3]=(uint8_t)(0x40u+(player==2?7u:8u));
+ packet[3]=(uint8_t)(0x40u+(player==2?7u:player==3?8u:9u));
  int32_t sent=0;
  int32_t rc=r->f.transfer(r->handle,(uint8_t)r->ep_out,packet,
                           (int32_t)sizeof(packet),&sent,100);
  c4fLog("SLISK PLAYER_LED player=%u rc=0x%08x sent=%d command=0x%02x\n",
         player,(unsigned)rc,(int)sent,(unsigned)packet[3]);
- if(rc==0 && sent==(int32_t)sizeof(packet))slisk_status(player==2?"PLAYER2_LED_SENT":"PLAYER3_LED_SENT");
+ if(rc==0 && sent==(int32_t)sizeof(packet))slisk_status(player==2?"PLAYER2_LED_SENT":player==3?"PLAYER3_LED_SENT":"PLAYER4_LED_SENT");
  else slisk_status("PLAYER2_LED_WRITE_FAILED");
 }
 /* Xbox 360 wireless force feedback via receiver OUT endpoint.
@@ -245,9 +245,12 @@ static int slisk_owner_allowed(uint32_t owner,int32_t ds4){
  return owner>0xffu && owner!=0xffffffffu && (ds4<=0 || owner!=(uint32_t)ds4);
 }
 int slisk_usb_run(void){
- Receiver rx={0},rx2={0};XWReceiver state; C4fVirtualPad pad={0},pad2={0};LogScan log={0};
+ Receiver rx={0},rx2={0},rx3={0};XWReceiver state; C4fVirtualPad pad={0},pad2={0},pad3={0};LogScan log={0};
  int second_phase=0,second_attempted=0,second_a_released=0,second_conflict_seen=0;uint64_t second_deadline=0,second_frame=0,second_feedback=0,second_open=0;
- uint32_t primary_owner=0;uint8_t second_large=0,second_small=0;
+ uint32_t primary_owner=0,second_owner=0;uint8_t second_large=0,second_small=0;
+ int third_phase=0,third_attempted=0,third_a_released=0,third_conflict_seen=0;
+ uint64_t third_deadline=0,third_frame=0,third_feedback=0,third_open=0;
+ uint8_t third_large=0,third_small=0;
  int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
  uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0, last_feedback=0;
  uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0;
@@ -264,8 +267,13 @@ int slisk_usb_run(void){
    second_open=now;rx2.f=rx.f;
    if(receiver_open(&rx2,1)==0)slisk_status("USB_RECEIVER_SLOT2_READY");
   }
+  if(!rx3.handle && now-third_open>=3000){third_open=now;rx3.f=rx.f;
+   if(receiver_open(&rx3,2)==0)slisk_status("USB_RECEIVER_SLOT3_READY");}
   XWPacketResult res=receiver_poll(&rx,&state,0,now);
   XWPacketResult res2=rx2.handle?receiver_poll(&rx2,&state,1,now):XW_PACKET_IGNORED;
+  XWPacketResult res3=rx3.handle?receiver_poll(&rx3,&state,2,now):XW_PACKET_IGNORED;
+  XWPadFrame f3=state.radios[2].last;
+  if(!state.radios[2].connected || !state.radios[2].has_input || now<state.radios[2].input_time_ms || now-state.radios[2].input_time_ms>2500){memset(&f3,0,sizeof(f3));f3.left_x=f3.left_y=f3.right_x=f3.right_y=128;}
   XWPadFrame f2=state.radios[1].last;
   if(!state.radios[1].connected || !state.radios[1].has_input || now<state.radios[1].input_time_ms || now-state.radios[1].input_time_ms>2500){memset(&f2,0,sizeof(f2));f2.left_x=f2.left_y=f2.right_x=f2.right_y=128;}
 
@@ -279,7 +287,7 @@ int slisk_usb_run(void){
    if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);(void)c4fVirtualPadInsert(&pad,&neut);c4fVirtualPadRemove(&pad);}
    /* If player 2 disconnects, stop the experimental two-pad session rather
       than leave an orphaned player-3 controller or reuse stale klog state. */
-   if(pad2.owned){slisk_status("PRIMARY_DISCONNECT_PLAYER3_CLEANUP");break;}
+   if(pad2.owned||pad3.owned){slisk_status("PRIMARY_DISCONNECT_EXTRA_PADS_CLEANUP");break;}
    phase=0;
    continue;
   }
@@ -401,7 +409,7 @@ int slisk_usb_run(void){
      /* Keep the virtual device alive for the remaining selection window.
         A duplicate owner must NEVER receive normal gameplay reports. */
     }else{
-     second_phase=3;
+     second_owner=log.owner;second_phase=3;
      c4fLog("SLISK PLAYER3_OWNER=0x%08x\n",log.owner);
      receiver_set_player_led(&rx2,3);
     }
@@ -444,11 +452,90 @@ int slisk_usb_run(void){
    }
   }
   if(second_phase==4){
-   if(second_large||second_small)receiver_set_rumble(&rx2,0,0);
+   if(third_large||third_small)receiver_set_rumble(&rx3,0,0);
+ if(pad3.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad3,&d);c4fVirtualPadRemove(&pad3);}
+ if(second_large||second_small)receiver_set_rumble(&rx2,0,0);
    second_large=second_small=0;
    if(pad2.owned){ScePadData d;c4fPadDataNeutral(&d);
     (void)c4fVirtualPadInsert(&pad2,&d);c4fVirtualPadRemove(&pad2);}
    second_phase=5;slisk_status("PLAYER3_CLEANUP_COMPLETE");
+  }
+  /* Third wireless Xbox controller: physical receiver channel 2 -> PS4 player 4.
+   * Register sequentially after player 3 owns a distinct user. */
+  if(phase==3 && second_phase==3 && rx3.handle && !third_phase &&
+     !third_attempted && res3==XW_PACKET_INPUT && (f3.buttons&XW_BTN_CROSS)){
+   third_attempted=1;
+   slisk_status("PLAYER4_REGISTRATION_START");
+   int32_t rc=c4fVirtualPadAdd(C4F_VDA_USER_SELECT);
+   c4fLog("SLISK PLAYER4_ADD_RC=0x%08x\n",(unsigned)rc);
+   log.candidate=0;log.candidates=0;log.first_candidate_ms=0;log.owner_seen=0;
+   third_phase=1;third_deadline=now_ms()+3000;
+  }
+  if(third_phase==1){
+   if(log.candidates>1){slisk_status("PLAYER4_AMBIGUOUS_ADD");third_phase=4;}
+   else if(log.candidate && log.candidates==1 && now>=log.first_candidate_ms+200){
+    c4fVirtualPadAdopt(&pad3,-1,C4F_VDA_USER_SELECT,log.candidate);
+    c4fLog("SLISK PLAYER4_DEVICE id=0x%llx\n",(unsigned long long)pad3.deviceId);
+    ScePadData d;c4fPadDataNeutral(&d);
+    int32_t rc=c4fVirtualPadInsert(&pad3,&d);
+    c4fLog("SLISK PLAYER4_NEUTRAL_RC=0x%08x\n",(unsigned)rc);
+    third_phase=rc==0?2:4;third_deadline=now_ms()+OWNER_SELECT_TIMEOUT_MS;
+   }else if(now>third_deadline){slisk_status("PLAYER4_ADD_TIMEOUT");third_phase=4;}
+  }
+  if(third_phase==2){
+   if(log.owner_seen){
+    if(!slisk_owner_allowed(log.owner,first_user) ||
+       log.owner==primary_owner || log.owner==second_owner){
+     if(!third_conflict_seen++){slisk_status("PLAYER4_OWNER_CONFLICT_WAITING");
+      c4fNotify("Slisk: spelare 4 maste valja en NY användare eller Gast");}
+    }else{
+     third_phase=3;c4fLog("SLISK PLAYER4_OWNER=0x%08x\n",log.owner);
+     receiver_set_player_led(&rx3,4);
+    }
+   }
+   if(third_phase==2 && now>third_deadline){slisk_status("PLAYER4_OWNER_TIMEOUT");third_phase=4;}
+  }
+  if(third_phase==2||third_phase==3){
+   if(res3==XW_PACKET_DISCONNECTED){slisk_status("PLAYER4_RADIO_DISCONNECTED");third_phase=4;}
+   if(third_phase==2 && now-third_frame>=16){
+    ScePadData d;c4fPadDataNeutral(&d);
+    if(!(f3.buttons&XW_BTN_CROSS))third_a_released=1;
+    if(state.radios[2].has_input && now>=state.radios[2].input_time_ms &&
+       now-state.radios[2].input_time_ms<=2500)
+     d.buttons=slisk_pre_owner_buttons(f3.buttons &
+       (third_a_released?~0u:~(uint32_t)XW_BTN_CROSS));
+    if(c4fVirtualPadInsert(&pad3,&d)!=0){third_phase=4;slisk_status("PLAYER4_NAV_FAILED");}
+    third_frame=now;
+   }
+   if(third_phase==3){
+    if(res3==XW_PACKET_INPUT &&
+      (f3.buttons&(XW_BTN_OPTIONS|XW_BTN_SHARE))==(XW_BTN_OPTIONS|XW_BTN_SHARE)){
+     third_phase=4;slisk_status("PLAYER4_MANUAL_CANCEL");
+    }
+    if(third_phase==3 && now-third_frame>=16){
+     ScePadData d;
+     if(state.radios[2].has_input && now>=state.radios[2].input_time_ms &&
+        now-state.radios[2].input_time_ms<=2500)mapped(&f3,&d);
+     else c4fPadDataNeutral(&d);
+     if(c4fVirtualPadInsert(&pad3,&d)!=0){third_phase=4;slisk_status("PLAYER4_INSERT_FAILED");}
+     third_frame=now;
+    }
+    if(third_phase==3 && now-third_feedback>=100){
+     third_feedback=now;C4fPadFeedback fb={0};
+     if(c4fVirtualPadFeedback(&pad3,&fb)==0 &&
+       (fb.large!=third_large||fb.small!=third_small)){
+      receiver_set_rumble(&rx3,fb.large,fb.small);
+      third_large=fb.large;third_small=fb.small;
+     }
+    }
+   }
+  }
+  if(third_phase==4){
+   if(third_large||third_small)receiver_set_rumble(&rx3,0,0);
+   third_large=third_small=0;
+   if(pad3.owned){ScePadData d;c4fPadDataNeutral(&d);
+     (void)c4fVirtualPadInsert(&pad3,&d);c4fVirtualPadRemove(&pad3);}
+   third_phase=5;slisk_status("PLAYER4_CLEANUP_COMPLETE");
   }
   if(phase==3 && res==XW_PACKET_INPUT && ((f.buttons&(XW_BTN_OPTIONS|XW_BTN_SHARE))==(XW_BTN_OPTIONS|XW_BTN_SHARE))){c4fLog("SLISK start+back requested shutdown\n");break;}
  }
@@ -458,6 +545,7 @@ int slisk_usb_run(void){
  if(pad.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad,&d);c4fVirtualPadRemove(&pad);}
  if(log.fd>=0)close(log.fd);
  c4fLogSetKlog(1);
+ receiver_close(&rx3);
  receiver_close(&rx2);
  receiver_close(&rx);
  if(rx.f.exit)(void)rx.f.exit();
