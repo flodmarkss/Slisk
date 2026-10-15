@@ -103,10 +103,33 @@ static int receiver_open(Receiver *r){
  (void)r->f.transfer(r->handle,(uint8_t)r->ep_out,inquiry,sizeof(inquiry),&sent,100);
  return 0;
 }
+/* Diagnostic capture is bounded: 24 packets and 8 non-timeout errors.
+ * A receiver being enumerated is not proof that controller input reaches us. */
 static XWPacketResult receiver_poll(Receiver *r,XWReceiver *state,uint64_t ms){
- uint8_t packet[64];int32_t n=0;
- if(r->f.transfer(r->handle,(uint8_t)r->ep_in,packet,sizeof(packet),&n,USB_TIMEOUT_MS)!=0||n<=0||(size_t)n>sizeof(packet))return XW_PACKET_IGNORED;
- return xw_receive(state,0,packet,(size_t)n,ms);
+ static unsigned samples=0, errors=0;
+ uint8_t packet[64]={0};int32_t n=0;
+ int32_t rc=r->f.transfer(r->handle,(uint8_t)r->ep_in,packet,sizeof(packet),&n,USB_TIMEOUT_MS);
+ if(rc!=0){
+  /* libusb-style timeout is -7. Record a few other failures only. */
+  if(rc!=-7 && errors++<8) c4fLog("SLISK USB_TRANSFER_ERROR rc=%d n=%d ep=0x%02x\\n",(int)rc,(int)n,r->ep_in);
+  return XW_PACKET_IGNORED;
+ }
+ if(n<=0||(size_t)n>sizeof(packet)){
+  if(errors++<8)c4fLog("SLISK USB_LENGTH_ERROR n=%d\\n",(int)n);
+  return XW_PACKET_IGNORED;
+ }
+ XWPacketResult result=xw_receive(state,0,packet,(size_t)n,ms);
+ if(samples<24){
+  char line[256];size_t pos=0;unsigned dump=(unsigned)n<32u?(unsigned)n:32u;
+  pos+=(size_t)snprintf(line+pos,sizeof(line)-pos,"SLISK USB_PACKET len=%d result=%d hex=",(int)n,(int)result);
+  for(unsigned i=0;i<dump && pos+4<sizeof(line);i++)
+   pos+=(size_t)snprintf(line+pos,sizeof(line)-pos,"%02x",packet[i]);
+  c4fLog("%s\\n",line);
+  samples++;
+ }
+ if(result==XW_PACKET_INPUT && (state->radios[0].last.buttons&XW_BTN_CROSS))
+  c4fLog("SLISK USB_A_DECODED len=%d\\n",(int)n);
+ return result;
 }
 static uint32_t ps4_buttons(uint32_t b){
  uint32_t out=0; const struct {uint32_t from,to;} m[]={
@@ -180,8 +203,9 @@ int slisk_usb_run(void){
  if(login_rc!=0||first_user<=0){slisk_status("NO_DS4_OWNER");c4fNotify("Slisk: kan inte hitta DS4-anvandare, stoppar");receiver_close(&rx);if(rx.f.exit)(void)rx.f.exit();if(rx.f.library)dlclose(rx.f.library);return 2;}
  while(now_ms()-begun<TEST_MAX_MS){
   uint64_t now=now_ms();
-  if(!rx.handle){if(!missing_alerted && now-begun>=15000){missing_alerted=1;slisk_status("USB_RECEIVER_NOT_FOUND_15S");c4fNotify("Slisk: ingen Xbox-mottagare efter 15 sekunder");}if(now-last_open>=1000){last_open=now;if(receiver_open(&rx)==0){slisk_status("USB_RECEIVER_READY");c4fNotify("Slisk: Xbox-mottagare hittad, tryck A");}}usleep(25000);continue;}
+  if(!rx.handle){if(!missing_alerted && now-begun>=15000){missing_alerted=1;slisk_status("USB_RECEIVER_NOT_FOUND_15S");c4fNotify("Slisk: ingen Xbox-mottagare efter 15 sekunder");}if(now-last_open>=1000){last_open=now;if(receiver_open(&rx)==0){slisk_status("USB_RECEIVER_READY");c4fNotify("Slisk: USB-mottagare hittad; paketdiagnostik aktiv, tryck A");}}usleep(25000);continue;}
   XWPacketResult res=receiver_poll(&rx,&state,now);
+  if(res==XW_PACKET_CONNECTED)slisk_status("XBOX_CONTROLLER_CONNECTED");
   if(res==XW_PACKET_DISCONNECTED){c4fLog("SLISK Xbox disconnected\n");if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);c4fVirtualPadInsert(&pad,&neut);c4fVirtualPadRemove(&pad);}phase=0;break;}
   XWPadFrame f=xw_frame_for_virtual(&state,0,now);
   if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
