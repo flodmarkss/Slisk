@@ -1,4 +1,4 @@
-# Slisk v0.9.0 – fristående Xbox 360 → PS4 GoldHEN systempayload (EXPERIMENTELL)
+# Slisk v0.9.1 – fristående Xbox 360 → PS4 GoldHEN systempayload (EXPERIMENTELL)
 
 **Mål:** Xbox 360 Wireless Receiver VID 045E / PID 0719 i PS4 USB, utan Windows/PC, Raspberry Pi eller installerad Control4Free. DualShock 4 för spelare 1 och Xbox 360 som virtuell DualShock 4 för spelare 2.
 
@@ -28,3 +28,11 @@ Loggar: `/data/slisk_x360/control4free.log` (historiskt filnamn från VDA-kompon
 ## Hårdvarurisk
 
 Tidigare v0.7.9 hängde hela användarens konsol. Offline-tester och cross-build är nödvändiga men **inte tillräckliga** för att garantera att den nya payloaden är säker. Följ uttrycklig installationsinstruktion först när nästa test är berett.
+
+## v0.9.1 verifiering
+
+- Delay 200 ms before adopting a single MBus event, abort if ambiguous.
+- Check USB descriptors for null pointers before walking interfaces.
+- Disable klog write-back while consuming klog; restore after cleanup.
+
+- Stoppa innan AddDevice om den första inloggade PS4-profilen inte kan verifieras eller om Pad-privilegier nekas.
