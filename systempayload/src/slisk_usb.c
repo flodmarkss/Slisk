@@ -47,7 +47,7 @@ typedef struct { Usbd f; usb_handle *handle; unsigned intf,ep_in,ep_out; int cla
 
 static void slisk_status(const char *stage){
  int fd=open("/data/slisk-v092-status.txt",O_WRONLY|O_CREAT|O_APPEND,0666);
- if(fd>=0){(void)write(fd,stage,strlen(stage));(void)write(fd,"\n",1);(void)close(fd);}
+ if(fd>=0){ssize_t nw=write(fd,stage,strlen(stage));if(nw>=0){nw=write(fd,"\n",1);}(void)nw;(void)close(fd);}
  c4fLog("SLISK STAGE: %s\n",stage);
 }
 static uint64_t now_ms(void){ struct timespec ts={0}; clock_gettime(CLOCK_MONOTONIC,&ts); return (uint64_t)ts.tv_sec*1000u + (uint64_t)ts.tv_nsec/1000000u; }
