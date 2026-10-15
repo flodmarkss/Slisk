@@ -7,6 +7,7 @@
 #include "c4f_vda.h"
 void slisk_test_map_frame(const XWPadFrame*,ScePadData*);
 int slisk_test_owner_allowed(uint32_t,int32_t);
+int slisk_test_owner_event(const char*,uint64_t,uint32_t*);
 void c4fLog(const char*fmt,...){(void)fmt;}
 void c4fNotify(const char*fmt,...){(void)fmt;}
 void c4fLogSetKlog(int enabled){(void)enabled;}
@@ -35,6 +36,13 @@ int main(void){
  assert(!slisk_test_owner_allowed(0xffffffffu,407270272));
  assert(!slisk_test_owner_allowed(407270272,407270272));
  assert(slisk_test_owner_allowed(407270273,407270272));
+ uint32_t parsed=0;
+ assert(slisk_test_owner_event("<118>#LOGIN MGR# SCE_MBUS_EVENT_DEVICE_OWNER_CHANGED [DeviceId:0xa030d][UserId:0x18400001]",0xa030d,&parsed));
+ assert(parsed==0x18400001u);
+ assert(slisk_test_owner_event("<118> DEVICE_OWNER_CHANGED [DeviceId:0xa030d][type:1][UserId:0x18400002]",0xa030d,&parsed));
+ assert(parsed==0x18400002u);
+ assert(!slisk_test_owner_event("<118> DEVICE_OWNER_CHANGED [DeviceId:0x9030d][UserId:0x18400001]",0xa030d,&parsed));
+ assert(!slisk_test_owner_event("<118> SCE_MBUS_EVENT_DEVICE_ADDED [DeviceId:0xa030d][subType:2]",0xa030d,&parsed));
  puts("Slisk recorded Xbox USB -> virtual PS4 sample & owner guards: PASS");
  return 0;
 }
