@@ -258,7 +258,7 @@ int slisk_usb_run(void){
   }
   if(phase==2||phase==3){
    if(state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms>30000){c4fLog("SLISK USB input silent 30s; stopping\n");break;}
-   if(log.owner_seen && phase==2)c4fLog("SLISK VDA_OWNER_SEEN owner=0x%08x expected_not=0x%08x\n",(unsigned)log.owner,(unsigned)first_user);
+   if(log.owner_seen && phase==2){static int owner_logged=0;if(!owner_logged++){c4fLog("SLISK VDA_OWNER_SEEN owner=0x%08x expected_not=0x%08x\n",(unsigned)log.owner,(unsigned)first_user);}}
    if(log.owner_seen&&log.owner!=0xffffffffu&&log.owner>0xffu){
     if(!slisk_owner_allowed(log.owner,first_user)){c4fLog("SLISK same user as DS4; choose guest, stopping\n");break;}
     if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);phase=3;}
