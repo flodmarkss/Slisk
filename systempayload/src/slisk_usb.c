@@ -276,6 +276,9 @@ int slisk_usb_run(void){
     slisk_status("XBOX_RADIO_DISCONNECTED_WAITING");
    }
    if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);(void)c4fVirtualPadInsert(&pad,&neut);c4fVirtualPadRemove(&pad);}
+   /* If player 2 disconnects, stop the experimental two-pad session rather
+      than leave an orphaned player-3 controller or reuse stale klog state. */
+   if(pad2.owned){slisk_status("PRIMARY_DISCONNECT_PLAYER3_CLEANUP");break;}
    phase=0;
    continue;
   }
