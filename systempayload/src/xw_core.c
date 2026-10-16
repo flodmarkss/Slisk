@@ -1,3 +1,8 @@
+/* SPDX-License-Identifier: GPL-3.0-only
+ * Slisk integration and Xbox 360 receiver implementation, modified 2026-10-16.
+ * Control4Free-derived modules and original notices are separately credited in
+ * systempayload/THIRD_PARTY.md. See the repository root LICENSE.
+ */
 #include "xw_core.h"
 #include <string.h>
 
