@@ -6,6 +6,7 @@
 #include "xw_core.h"
 #include "c4f_vda.h"
 void slisk_test_map_frame(const XWPadFrame*,ScePadData*);
+int slisk_test_account_reclaim(const char*,uint64_t,uint32_t);
 int slisk_test_owner_allowed(uint32_t,int32_t);
 int slisk_test_owner_event(const char*,uint64_t,uint32_t*);
 uint32_t slisk_test_pre_owner_buttons(uint32_t);
@@ -73,6 +74,15 @@ int main(void){
  assert(xw_receive(&pair,1,press,sizeof(press),450)==XW_PACKET_INPUT);
  assert((pair.radios[1].last.buttons&XW_BTN_CROSS)!=0);
  assert((pair.radios[0].last.buttons&XW_BTN_CROSS)==0);
+ assert(slisk_test_account_reclaim(
+   "SCE_MBUS_EVENT_DEVICE_OWNER_CHANGED [DeviceId:0x30300][UserId:0x18467380]",
+   0x5030d,0x18467380));
+ assert(!slisk_test_account_reclaim(
+   "SCE_MBUS_EVENT_DEVICE_OWNER_CHANGED [DeviceId:0x5030d][UserId:0x18467380]",
+   0x5030d,0x18467380));
+ assert(!slisk_test_account_reclaim(
+   "SCE_MBUS_EVENT_DEVICE_OWNER_CHANGED [DeviceId:0x30300][UserId:0x18467381]",
+   0x5030d,0x18467380));
  puts("Slisk recorded Xbox USB -> virtual PS4 sample & owner guards: PASS");
  return 0;
 }
