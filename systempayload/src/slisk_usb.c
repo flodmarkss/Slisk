@@ -247,7 +247,7 @@ int slisk_usb_run(void){
  uint8_t third_large=0,third_small=0;
  int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
  uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0, last_feedback=0;
- uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0, first_a_armed=1;
+ uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0;
  xw_init(&state);log.fd=-1;
  slisk_status("LOOP_ENTERED");if(usbd_init(&rx.f)!=0)return 1;slisk_status("USB_SYMBOLS_OK");int32_t usb_init_rc=rx.f.init();if(usb_init_rc!=0){slisk_status("USB_INIT_FAILED");c4fNotify("Slisk: sceUsbdInit misslyckades");return 3;}slisk_status("USB_INITIALIZED");c4fNotify("Slisk: USB initierat; söker mottagare");
  c4fLog("SLISK Xbox USB backend initialized, waiting for receiver\n");
@@ -302,9 +302,8 @@ int slisk_usb_run(void){
    c4fNotify("Slisk: avbrutet med Back+Start");
    break;
   }
-  if(!phase && res==XW_PACKET_INPUT && !(f.buttons&XW_BTN_CROSS))first_a_armed=1;
-  if(!phase && first_a_armed && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){
-   first_a_armed=0;slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
+  if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){
+   slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
    c4fLog("SLISK Xbox A pressed, starting verified native controller registration\n");
    if(verify_reader(&log)!=0){slisk_status("KLOG_VERIFY_FAILED");break;}
    /* AddDevice status may be nonzero even if device appears: only the MBus
