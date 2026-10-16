@@ -57,9 +57,21 @@ jobs:
           docker run --rm --user "$(id -u):$(id -g)" \
             -v "$PWD:/src" -w /src slisk-payload-builder make -j2
           file build/slisk-x360-directusb.elf
+      - name: Package complete corresponding GPLv3 source
+        working-directory: systempayload
+        run: |
+          mkdir -p build
+          tar -czf build/slisk-complete-source.tar.gz \
+            --exclude='.git' --exclude='build' \
+            -C "$GITHUB_WORKSPACE" .
+          tar -tzf build/slisk-complete-source.tar.gz | grep -q 'upstream/LICENSE'
+          tar -tzf build/slisk-complete-source.tar.gz | grep -q 'systempayload/src/slisk_usb.c'
+          tar -tzf build/slisk-complete-source.tar.gz | grep -q 'LICENSE'
       - name: Publish ELF test artifact
         uses: actions/upload-artifact@v4
         with:
           name: slisk-x360-directusb-ps4-experimental
-          path: systempayload/build/slisk-x360-directusb.elf
+          path: |
+            systempayload/build/slisk-x360-directusb.elf
+            systempayload/build/slisk-complete-source.tar.gz
           if-no-files-found: error
