@@ -179,7 +179,7 @@ static void mapped(const XWPadFrame *f,ScePadData *d){
 
 /* A klog read must first show a marker written by this process. Never adopt an
  * old event from before device creation; abort on ambiguous multiple devices. */
-typedef struct {int fd; char line[1024];size_t used;char marker[64];int seen_marker;uint64_t candidate;unsigned candidates;uint64_t first_candidate_ms;uint32_t owner;int owner_seen;} LogScan;
+typedef struct {int fd; char line[1024];size_t used;char marker[64];int seen_marker;uint64_t candidate;unsigned candidates;uint64_t first_candidate_ms;uint32_t owner;int owner_seen;uint64_t watch_device;uint32_t watch_owner;int reclaim_seen;} LogScan;
 static void handle_line(LogScan *s){
  s->line[s->used]=0;
  /* Capture only relevant MBus lifecycle events, bounded to 32 lines.
@@ -196,6 +196,22 @@ static void handle_line(LogScan *s){
   if(id && (!s->candidate||s->candidate!=id)){
    if(!s->candidates)s->first_candidate_ms=now_ms();
    s->candidate=id;s->candidates++;
+  }
+ }
+ /* Detect a DIFFERENT controller reclaiming the account from the Xbox VDA.
+  * We only arm this after Xbox ownership has been confirmed. */
+ if(s->seen_marker && s->watch_device && s->watch_owner){
+  const char *event=strstr(s->line,"DEVICE_OWNER_CHANGED");
+  if(event){
+   const char *device=strstr(event,"[DeviceId:0x");
+   const char *user=strstr(event,"[UserId:0x");
+   unsigned long long device_id=0;unsigned owner_id=0;
+   if(device && user && sscanf(device,"[DeviceId:0x%llx]",&device_id)==1 &&
+      sscanf(user,"[UserId:0x%x]",&owner_id)==1 &&
+      (uint64_t)device_id!=s->watch_device && owner_id==s->watch_owner){
+    s->reclaim_seen=1;
+    c4fLog("SLISK account reclaimed by another device=0x%llx owner=0x%08x\\n",device_id,owner_id);
+   }
   }
  }
  if(s->candidate){
@@ -223,12 +239,14 @@ static void scan(LogScan *s){char b[1024];for(int r=0;r<6;r++){
  }
 }}
 static int verify_reader(LogScan *s){
+ if(s->fd>=0){close(s->fd);s->fd=-1;}
  s->fd=c4fKlogOpenDevice();if(s->fd<0)return -1;
  c4fLogSetKlog(0); /* Avoid echoing our own file log into klog reader. */
  /* Flush historical log lines before setting a new marker. */
  for(unsigned i=0;i<20;i++){scan(s);usleep(12000);}
  snprintf(s->marker,sizeof(s->marker),"slisk-unique-%llu",(unsigned long long)now_ms());
  s->candidate=0;s->candidates=0;s->first_candidate_ms=0;s->seen_marker=0;
+ s->watch_device=0;s->watch_owner=0;s->reclaim_seen=0;
  c4fKlogMark(s->marker);
  uint64_t until=now_ms()+1600;
  while(now_ms()<until){scan(s);if(s->seen_marker)return 0;usleep(10000);}
@@ -314,6 +332,21 @@ int slisk_usb_run(void){
    slisk_status("VDA_ADD_CALLED");phase=1;deadline=now+3000;
   }
   if(phase && log.fd>=0)scan(&log);
+  if(phase==3 && first_led_player==1 && log.reclaim_seen){
+   /* The PS4 has given the same account to another device (e.g. DS4).
+    * Release ONLY our known virtual pad and allow a fresh user selection. */
+   slisk_status("PLAYER1_ACCOUNT_RECLAIMED_RELEASE_XBOX");
+   log.watch_device=0;log.watch_owner=0;log.reclaim_seen=0;
+   if(last_rumble_large||last_rumble_small)receiver_set_rumble(&rx,0,0);
+   last_rumble_large=last_rumble_small=0;
+   if(pad.owned){ScePadData d;c4fPadDataNeutral(&d);
+    (void)c4fVirtualPadInsert(&pad,&d);c4fVirtualPadRemove(&pad);}
+   memset(&pad,0,sizeof(pad));
+   phase=0;primary_owner=0;first_led_player=2;
+   /* A new press can invoke a new, independent PS4 user selection. */
+   c4fNotify("Slisk: PS4-dosan tog over. Tryck Xbox A for att valja konto igen.");
+   continue;
+  }
   if(phase==1){
    if(log.candidates>1){c4fLog("SLISK ambiguous MBus add events: aborting without adopting a device\n");break;}
    if(log.candidate&&log.candidates==1&&now>=log.first_candidate_ms+200){slisk_status("VDA_ID_SEEN");
@@ -339,7 +372,7 @@ int slisk_usb_run(void){
      slisk_status("PLAYER2_SHARED_USER_EXPERIMENT");
      c4fLog("SLISK shared-user experiment, owner=0x%08x\n",(unsigned)log.owner);
     }
-    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);primary_owner=log.owner;first_led_player=slisk_owner_allowed(log.owner,first_user)?2:1;phase=3;receiver_set_player_led(&rx,first_led_player);}
+    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);primary_owner=log.owner;first_led_player=slisk_owner_allowed(log.owner,first_user)?2:1;phase=3;receiver_set_player_led(&rx,first_led_player);if(first_led_player==1){log.watch_device=pad.deviceId;log.watch_owner=primary_owner;log.reclaim_seen=0;slisk_status("PLAYER1_HANDOFF_WATCH_ARMED");}}
    }
    if(phase==2 && now>deadline){
     slisk_status("VDA_OWNER_TIMEOUT_CLEANUP");
