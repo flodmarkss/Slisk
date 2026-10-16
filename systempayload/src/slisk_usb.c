@@ -337,14 +337,14 @@ int slisk_usb_run(void){
    if(log.owner_seen && phase==2){static int owner_logged=0;if(!owner_logged++){c4fLog("SLISK VDA_OWNER_SEEN owner=0x%08x expected_not=0x%08x\n",(unsigned)log.owner,(unsigned)first_user);}}
    if(log.owner_seen&&log.owner!=0xffffffffu&&log.owner>0xffu){
     if(!slisk_owner_allowed(log.owner,first_user)){
-     slisk_status("PLAYER2_OWNER_CONFLICT_CLEANUP");
-     c4fNotify("Slisk: samma konto som PS4-dosan. Valj Gast eller annat konto och tryck A igen.");
-     c4fLog("SLISK duplicate DS4 owner refused; removing only the rejected virtual pad\n");
-     if(pad.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad,&d);c4fVirtualPadRemove(&pad);}
-     memset(&pad,0,sizeof(pad));
-     log.candidate=0;log.candidates=0;log.first_candidate_ms=0;log.owner_seen=0;
-     phase=0;
-     continue;
+     /* PS4 may have already reassigned the DS4 user to this virtual device.
+      * We cannot safely restore hardware ownership through the VDA API.
+      * Do not retry registration or transmit more frames after this event. */
+     slisk_status("PLAYER2_DUPLICATE_OWNER_FATAL_STOP");
+     c4fLog("SLISK UNSAFE_OWNER_COLLISION: virtual id=0x%llx user=0x%08x DS4=0x%08x; stopping without retry\n",
+       (unsigned long long)pad.deviceId,(unsigned)log.owner,(unsigned)first_user);
+     c4fNotify("Slisk: kontokonflikt! Starta om PS4 innan nytt forsok.");
+     break; /* Normal shutdown deletes our adopted virtual devices once. */
     }
     if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);primary_owner=log.owner;phase=3;receiver_set_player_led(&rx,2);}
    }
