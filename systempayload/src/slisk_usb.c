@@ -210,7 +210,7 @@ static void handle_line(LogScan *s){
       sscanf(user,"[UserId:0x%x]",&owner_id)==1 &&
       (uint64_t)device_id!=s->watch_device && owner_id==s->watch_owner){
     s->reclaim_seen=1;
-    c4fLog("SLISK account reclaimed by another device=0x%llx owner=0x%08x\\n",device_id,owner_id);
+    c4fLog("SLISK account reclaimed by another device=0x%llx owner=0x%08x\n",device_id,owner_id);
    }
   }
  }
@@ -265,7 +265,7 @@ int slisk_usb_run(void){
  uint8_t third_large=0,third_small=0;
  int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
  uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0, last_feedback=0;
- uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0;unsigned first_led_player=2;
+ uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0, retry_wait_release=0;unsigned first_led_player=2;
  xw_init(&state);log.fd=-1;
  slisk_status("LOOP_ENTERED");if(usbd_init(&rx.f)!=0)return 1;slisk_status("USB_SYMBOLS_OK");int32_t usb_init_rc=rx.f.init();if(usb_init_rc!=0){slisk_status("USB_INIT_FAILED");c4fNotify("Slisk: sceUsbdInit misslyckades");return 3;}slisk_status("USB_INITIALIZED");c4fNotify("Slisk: USB initierat; söker mottagare");
  c4fLog("SLISK Xbox USB backend initialized, waiting for receiver\n");
@@ -320,7 +320,8 @@ int slisk_usb_run(void){
    c4fNotify("Slisk: avbrutet med Back+Start");
    break;
   }
-  if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){
+  if(!phase && res==XW_PACKET_INPUT && !(f.buttons&XW_BTN_CROSS))retry_wait_release=0;
+  if(!phase && !retry_wait_release && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){
    slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
    c4fLog("SLISK Xbox A pressed, starting verified native controller registration\n");
    if(verify_reader(&log)!=0){slisk_status("KLOG_VERIFY_FAILED");break;}
@@ -342,7 +343,7 @@ int slisk_usb_run(void){
    if(pad.owned){ScePadData d;c4fPadDataNeutral(&d);
     (void)c4fVirtualPadInsert(&pad,&d);c4fVirtualPadRemove(&pad);}
    memset(&pad,0,sizeof(pad));
-   phase=0;primary_owner=0;first_led_player=2;
+   phase=0;primary_owner=0;first_led_player=2;retry_wait_release=1;
    /* A new press can invoke a new, independent PS4 user selection. */
    c4fNotify("Slisk: PS4-dosan tog over. Tryck Xbox A for att valja konto igen.");
    continue;
@@ -617,6 +618,12 @@ int slisk_test_owner_event(const char *line,uint64_t candidate,uint32_t *out_own
  if(!scan_state.owner_seen)return 0;
  *out_owner=scan_state.owner;
  return 1;
+}
+int slisk_test_account_reclaim(const char *line,uint64_t virtual_id,uint32_t owner){
+ LogScan l={0};l.seen_marker=1;l.watch_device=virtual_id;l.watch_owner=owner;
+ size_t n=strlen(line);if(n>=sizeof(l.line))return 0;
+ memcpy(l.line,line,n);l.used=n;handle_line(&l);
+ return l.reclaim_seen;
 }
 void slisk_test_map_frame(const XWPadFrame *f,ScePadData *out){mapped(f,out);}
 int slisk_test_owner_allowed(uint32_t owner,int32_t active_ds4){return slisk_owner_allowed(owner,active_ds4);}
