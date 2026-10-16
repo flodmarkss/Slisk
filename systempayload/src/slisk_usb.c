@@ -104,15 +104,15 @@ static int receiver_open(Receiver *r,unsigned channel){
  * claimed receiver OUT endpoint, and never changes the input path. */
 static void receiver_set_player_led(Receiver *r,unsigned player){
  if(!r || !r->handle || !r->claimed || !r->ep_out)return;
- if(player<2||player>4)return;
+ if(player<1||player>4)return;
  uint8_t packet[12]={0x00,0x00,0x08,0,0,0,0,0,0,0,0,0};
- packet[3]=(uint8_t)(0x40u+(player==2?7u:player==3?8u:9u));
+ packet[3]=(uint8_t)(0x40u+(player==1?6u:player==2?7u:player==3?8u:9u));
  int32_t sent=0;
  int32_t rc=r->f.transfer(r->handle,(uint8_t)r->ep_out,packet,
                           (int32_t)sizeof(packet),&sent,100);
  c4fLog("SLISK PLAYER_LED player=%u rc=0x%08x sent=%d command=0x%02x\n",
         player,(unsigned)rc,(int)sent,(unsigned)packet[3]);
- if(rc==0 && sent==(int32_t)sizeof(packet))slisk_status(player==2?"PLAYER2_LED_SENT":player==3?"PLAYER3_LED_SENT":"PLAYER4_LED_SENT");
+ if(rc==0 && sent==(int32_t)sizeof(packet))slisk_status(player==1?"PLAYER1_LED_SENT":player==2?"PLAYER2_LED_SENT":player==3?"PLAYER3_LED_SENT":"PLAYER4_LED_SENT");
  else slisk_status("PLAYER2_LED_WRITE_FAILED");
 }
 /* Xbox 360 wireless force feedback via receiver OUT endpoint.
@@ -247,7 +247,7 @@ int slisk_usb_run(void){
  uint8_t third_large=0,third_small=0;
  int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
  uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0, last_feedback=0;
- uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0;
+ uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0;unsigned first_led_player=2;
  xw_init(&state);log.fd=-1;
  slisk_status("LOOP_ENTERED");if(usbd_init(&rx.f)!=0)return 1;slisk_status("USB_SYMBOLS_OK");int32_t usb_init_rc=rx.f.init();if(usb_init_rc!=0){slisk_status("USB_INIT_FAILED");c4fNotify("Slisk: sceUsbdInit misslyckades");return 3;}slisk_status("USB_INITIALIZED");c4fNotify("Slisk: USB initierat; söker mottagare");
  c4fLog("SLISK Xbox USB backend initialized, waiting for receiver\n");
@@ -279,7 +279,7 @@ int slisk_usb_run(void){
 
   if(res==XW_PACKET_CONNECTED){
    slisk_status("XBOX_CONTROLLER_CONNECTED");
-   if(phase==3){receiver_set_player_led(&rx,2);slisk_status("PLAYER2_RECONNECTED");}
+   if(phase==3){receiver_set_player_led(&rx,first_led_player);slisk_status("PLAYER2_RECONNECTED");}
   }
   if(res==XW_PACKET_DISCONNECTED){
    static unsigned disconnect_notices=0;
@@ -339,7 +339,7 @@ int slisk_usb_run(void){
      slisk_status("PLAYER2_SHARED_USER_EXPERIMENT");
      c4fLog("SLISK shared-user experiment, owner=0x%08x\n",(unsigned)log.owner);
     }
-    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);primary_owner=log.owner;phase=3;receiver_set_player_led(&rx,2);}
+    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);primary_owner=log.owner;first_led_player=slisk_owner_allowed(log.owner,first_user)?2:1;phase=3;receiver_set_player_led(&rx,first_led_player);}
    }
    if(phase==2 && now>deadline){
     slisk_status("VDA_OWNER_TIMEOUT_CLEANUP");
