@@ -49,6 +49,9 @@ int main(void){
  lock=open(C4F_LOG_DIR "/instance.lock",O_WRONLY|O_CREAT,0666);
  if(lock<0 || flock(lock,LOCK_EX|LOCK_NB)!=0){if(lock>=0)close(lock);return 1;}
  c4fLogOpen();
+ /* Legacy diagnostic files from older builds are no longer used. */
+ if(unlink("/data/slisk-v092-status.txt")==0)c4fLog("SLISK removed obsolete v092 status text file\n");
+ if(unlink("/data/slisk-v092.status")==0)c4fLog("SLISK removed obsolete v092 status file\n");
 
  c4fLog("SLISK native Xbox 360 PS4 payload starting, firmware=%08x\n",(unsigned)kernel_get_fw_version());
  if(authorize()!=0)goto done;

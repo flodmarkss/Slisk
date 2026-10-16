@@ -24,9 +24,7 @@
 
 #define MAX_RADIOS 4
 #define USB_TIMEOUT_MS 12
-#define TEST_MAX_MS (20u*60u*1000u)
 #define OWNER_SELECT_TIMEOUT_MS 30000u
-#define USB_IDLE_SHUTDOWN_MS 120000u
 
 /* libusb 1.0 USB descriptor ABI (used by libSceUsbd). */
 typedef struct usb_device usb_device;
@@ -111,15 +109,15 @@ static int receiver_open(Receiver *r,unsigned channel){
  * claimed receiver OUT endpoint, and never changes the input path. */
 static void receiver_set_player_led(Receiver *r,unsigned player){
  if(!r || !r->handle || !r->claimed || !r->ep_out)return;
- if(player<2||player>4)return;
+ if(player<1||player>4)return;
  uint8_t packet[12]={0x00,0x00,0x08,0,0,0,0,0,0,0,0,0};
- packet[3]=(uint8_t)(0x40u+(player==2?7u:player==3?8u:9u));
+ packet[3]=(uint8_t)(0x40u+(player==1?6u:player==2?7u:player==3?8u:9u));
  int32_t sent=0;
  int32_t rc=r->f.transfer(r->handle,(uint8_t)r->ep_out,packet,
                           (int32_t)sizeof(packet),&sent,100);
  c4fLog("SLISK PLAYER_LED player=%u rc=0x%08x sent=%d command=0x%02x\n",
         player,(unsigned)rc,(int)sent,(unsigned)packet[3]);
- if(rc==0 && sent==(int32_t)sizeof(packet))slisk_status(player==2?"PLAYER2_LED_SENT":player==3?"PLAYER3_LED_SENT":"PLAYER4_LED_SENT");
+ if(rc==0 && sent==(int32_t)sizeof(packet))slisk_status(player==1?"PLAYER1_LED_SENT":player==2?"PLAYER2_LED_SENT":player==3?"PLAYER3_LED_SENT":"PLAYER4_LED_SENT");
  else slisk_status("PLAYER2_LED_WRITE_FAILED");
 }
 /* Xbox 360 wireless force feedback via receiver OUT endpoint.
@@ -186,7 +184,7 @@ static void mapped(const XWPadFrame *f,ScePadData *d){
 
 /* A klog read must first show a marker written by this process. Never adopt an
  * old event from before device creation; abort on ambiguous multiple devices. */
-typedef struct {int fd; char line[1024];size_t used;char marker[64];int seen_marker;uint64_t candidate;unsigned candidates;uint64_t first_candidate_ms;uint32_t owner;int owner_seen;} LogScan;
+typedef struct {int fd; char line[1024];size_t used;char marker[64];int seen_marker;uint64_t candidate;unsigned candidates;uint64_t first_candidate_ms;uint32_t owner;int owner_seen;uint64_t watch_device;uint32_t watch_owner;int reclaim_seen;} LogScan;
 static void handle_line(LogScan *s){
  s->line[s->used]=0;
  /* Capture only relevant MBus lifecycle events, bounded to 32 lines.
@@ -203,6 +201,22 @@ static void handle_line(LogScan *s){
   if(id && (!s->candidate||s->candidate!=id)){
    if(!s->candidates)s->first_candidate_ms=now_ms();
    s->candidate=id;s->candidates++;
+  }
+ }
+ /* Detect a DIFFERENT controller reclaiming the account from the Xbox VDA.
+  * We only arm this after Xbox ownership has been confirmed. */
+ if(s->seen_marker && s->watch_device && s->watch_owner){
+  const char *event=strstr(s->line,"DEVICE_OWNER_CHANGED");
+  if(event){
+   const char *device=strstr(event,"[DeviceId:0x");
+   const char *user=strstr(event,"[UserId:0x");
+   unsigned long long device_id=0;unsigned owner_id=0;
+   if(device && user && sscanf(device,"[DeviceId:0x%llx]",&device_id)==1 &&
+      sscanf(user,"[UserId:0x%x]",&owner_id)==1 &&
+      (uint64_t)device_id!=s->watch_device && owner_id==s->watch_owner){
+    s->reclaim_seen=1;
+    c4fLog("SLISK account reclaimed by another device=0x%llx owner=0x%08x\n",device_id,owner_id);
+   }
   }
  }
  if(s->candidate){
@@ -230,12 +244,14 @@ static void scan(LogScan *s){char b[1024];for(int r=0;r<6;r++){
  }
 }}
 static int verify_reader(LogScan *s){
+ if(s->fd>=0){close(s->fd);s->fd=-1;}
  s->fd=c4fKlogOpenDevice();if(s->fd<0)return -1;
  c4fLogSetKlog(0); /* Avoid echoing our own file log into klog reader. */
  /* Flush historical log lines before setting a new marker. */
  for(unsigned i=0;i<20;i++){scan(s);usleep(12000);}
  snprintf(s->marker,sizeof(s->marker),"slisk-unique-%llu",(unsigned long long)now_ms());
  s->candidate=0;s->candidates=0;s->first_candidate_ms=0;s->seen_marker=0;
+ s->watch_device=0;s->watch_owner=0;s->reclaim_seen=0;
  c4fKlogMark(s->marker);
  uint64_t until=now_ms()+1600;
  while(now_ms()<until){scan(s);if(s->seen_marker)return 0;usleep(10000);}
@@ -254,14 +270,14 @@ int slisk_usb_run(void){
  uint8_t third_large=0,third_small=0;
  int32_t before_users[4]={-1,-1,-1,-1};int32_t first_user=-1;
  uint64_t begun=now_ms(), last_open=0, deadline=0, last_frame=0, last_feedback=0;
- uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0;
+ uint8_t last_rumble_large=0,last_rumble_small=0;int phase=0, missing_alerted=0, retry_wait_release=0;unsigned first_led_player=2;
  xw_init(&state);log.fd=-1;
  slisk_status("LOOP_ENTERED");if(usbd_init(&rx.f)!=0)return 1;slisk_status("USB_SYMBOLS_OK");int32_t usb_init_rc=rx.f.init();if(usb_init_rc!=0){slisk_status("USB_INIT_FAILED");c4fNotify("Slisk: sceUsbdInit misslyckades");return 3;}slisk_status("USB_INITIALIZED");c4fNotify("Slisk: USB initierat; söker mottagare");
  c4fLog("SLISK Xbox USB backend initialized, waiting for receiver\n");
  int login_rc=c4fLoginUsers(before_users);
  if(login_rc==0)for(int i=0;i<4;i++)if(before_users[i]>0){first_user=before_users[i];break;}
  if(login_rc!=0||first_user<=0){slisk_status("NO_DS4_OWNER");c4fNotify("Slisk: kan inte hitta DS4-anvandare, stoppar");receiver_close(&rx);if(rx.f.exit)(void)rx.f.exit();if(rx.f.library)dlclose(rx.f.library);return 2;}
- while(now_ms()-begun<TEST_MAX_MS){
+ while(1){
   uint64_t now=now_ms();
   if(!rx.handle){if(!missing_alerted && now-begun>=15000){missing_alerted=1;slisk_status("USB_RECEIVER_NOT_FOUND_15S");c4fNotify("Slisk: ingen Xbox-mottagare efter 15 sekunder");}if(now-last_open>=1000){last_open=now;if(receiver_open(&rx,0)==0){slisk_status("USB_RECEIVER_READY");c4fNotify("Slisk: USB-mottagare hittad; paketdiagnostik aktiv, tryck A");}}usleep(25000);continue;}
   if(!rx2.handle && now-second_open>=3000){
@@ -273,23 +289,32 @@ int slisk_usb_run(void){
   XWPacketResult res=receiver_poll(&rx,&state,0,now);
   XWPacketResult res2=rx2.handle?receiver_poll(&rx2,&state,1,now):XW_PACKET_IGNORED;
   XWPacketResult res3=rx3.handle?receiver_poll(&rx3,&state,2,now):XW_PACKET_IGNORED;
+  if(res2==XW_PACKET_CONNECTED && second_phase==3){
+   receiver_set_player_led(&rx2,3);slisk_status("PLAYER3_RECONNECTED");
+  }
+  if(res3==XW_PACKET_CONNECTED && third_phase==3){
+   receiver_set_player_led(&rx3,4);slisk_status("PLAYER4_RECONNECTED");
+  }
   XWPadFrame f3=state.radios[2].last;
   if(!state.radios[2].connected || !state.radios[2].has_input || now<state.radios[2].input_time_ms || now-state.radios[2].input_time_ms>2500){memset(&f3,0,sizeof(f3));f3.left_x=f3.left_y=f3.right_x=f3.right_y=128;}
   XWPadFrame f2=state.radios[1].last;
   if(!state.radios[1].connected || !state.radios[1].has_input || now<state.radios[1].input_time_ms || now-state.radios[1].input_time_ms>2500){memset(&f2,0,sizeof(f2));f2.left_x=f2.left_y=f2.right_x=f2.right_y=128;}
 
-  if(res==XW_PACKET_CONNECTED)slisk_status("XBOX_CONTROLLER_CONNECTED");
+  if(res==XW_PACKET_CONNECTED){
+   slisk_status("XBOX_CONTROLLER_CONNECTED");
+   if(phase==3){receiver_set_player_led(&rx,first_led_player);slisk_status("PLAYER2_RECONNECTED");}
+  }
   if(res==XW_PACKET_DISCONNECTED){
    static unsigned disconnect_notices=0;
    if(disconnect_notices++==0){
     c4fLog("SLISK Xbox radio disconnected or idle; continuing to poll receiver\n");
     slisk_status("XBOX_RADIO_DISCONNECTED_WAITING");
    }
-   if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);(void)c4fVirtualPadInsert(&pad,&neut);c4fVirtualPadRemove(&pad);}
-   /* If player 2 disconnects, stop the experimental two-pad session rather
-      than leave an orphaned player-3 controller or reuse stale klog state. */
-   if(pad2.owned||pad3.owned){slisk_status("PRIMARY_DISCONNECT_EXTRA_PADS_CLEANUP");break;}
-   phase=0;
+   /* Preserve the owned virtual pad across temporary wireless radio loss.
+    * Feed neutral input to release held buttons; new reports resume on reconnect. */
+   if(pad.owned){ScePadData neut;c4fPadDataNeutral(&neut);(void)c4fVirtualPadInsert(&pad,&neut);}
+   if(last_rumble_large||last_rumble_small){receiver_set_rumble(&rx,0,0);last_rumble_large=last_rumble_small=0;}
+   slisk_status("PLAYER2_RADIO_OFFLINE_KEEPING_VIRTUAL_PAD");
    continue;
   }
   XWPadFrame f=xw_frame_for_virtual(&state,0,now);
@@ -300,7 +325,9 @@ int slisk_usb_run(void){
    c4fNotify("Slisk: avbrutet med Back+Start");
    break;
   }
-  if(!phase && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
+  if(!phase && res==XW_PACKET_INPUT && !(f.buttons&XW_BTN_CROSS))retry_wait_release=0;
+  if(!phase && !retry_wait_release && res==XW_PACKET_INPUT && (f.buttons&XW_BTN_CROSS)){
+   slisk_status("XBOX_A_RECEIVED");c4fNotify("Slisk: Xbox A registrerat, kontrollerar enhet");
    c4fLog("SLISK Xbox A pressed, starting verified native controller registration\n");
    if(verify_reader(&log)!=0){slisk_status("KLOG_VERIFY_FAILED");break;}
    /* AddDevice status may be nonzero even if device appears: only the MBus
@@ -311,6 +338,21 @@ int slisk_usb_run(void){
    slisk_status("VDA_ADD_CALLED");phase=1;deadline=now+3000;
   }
   if(phase && log.fd>=0)scan(&log);
+  if(phase==3 && first_led_player==1 && log.reclaim_seen){
+   /* The PS4 has given the same account to another device (e.g. DS4).
+    * Release ONLY our known virtual pad and allow a fresh user selection. */
+   slisk_status("PLAYER1_ACCOUNT_RECLAIMED_RELEASE_XBOX");
+   log.watch_device=0;log.watch_owner=0;log.reclaim_seen=0;
+   if(last_rumble_large||last_rumble_small)receiver_set_rumble(&rx,0,0);
+   last_rumble_large=last_rumble_small=0;
+   if(pad.owned){ScePadData d;c4fPadDataNeutral(&d);
+    (void)c4fVirtualPadInsert(&pad,&d);c4fVirtualPadRemove(&pad);}
+   memset(&pad,0,sizeof(pad));
+   phase=0;primary_owner=0;first_led_player=2;retry_wait_release=1;
+   /* A new press can invoke a new, independent PS4 user selection. */
+   c4fNotify("Slisk: PS4-dosan tog over. Tryck Xbox A for att valja konto igen.");
+   continue;
+  }
   if(phase==1){
    if(log.candidates>1){c4fLog("SLISK ambiguous MBus add events: aborting without adopting a device\n");break;}
    if(log.candidate&&log.candidates==1&&now>=log.first_candidate_ms+200){slisk_status("VDA_ID_SEEN");
@@ -330,11 +372,13 @@ int slisk_usb_run(void){
    }else if(now>deadline){c4fLog("SLISK AddDevice was not confirmed within timeout\n");break;}
   }
   if(phase==2||phase==3){
-   if(state.radios[0].has_input && now>=state.radios[0].input_time_ms && now-state.radios[0].input_time_ms>USB_IDLE_SHUTDOWN_MS){c4fLog("SLISK USB input silent 120s; stopping\n");break;}
    if(log.owner_seen && phase==2){static int owner_logged=0;if(!owner_logged++){c4fLog("SLISK VDA_OWNER_SEEN owner=0x%08x expected_not=0x%08x\n",(unsigned)log.owner,(unsigned)first_user);}}
    if(log.owner_seen&&log.owner!=0xffffffffu&&log.owner>0xffu){
-    if(!slisk_owner_allowed(log.owner,first_user)){c4fLog("SLISK same user as DS4; choose guest, stopping\n");break;}
-    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);primary_owner=log.owner;phase=3;receiver_set_player_led(&rx,2);}
+    if(!slisk_owner_allowed(log.owner,first_user)){
+     slisk_status("PLAYER2_SHARED_USER_EXPERIMENT");
+     c4fLog("SLISK shared-user experiment, owner=0x%08x\n",(unsigned)log.owner);
+    }
+    if(phase==2){c4fLog("SLISK VIRTUAL OWNER assigned: 0x%08x\n",log.owner);primary_owner=log.owner;first_led_player=slisk_owner_allowed(log.owner,first_user)?2:1;phase=3;receiver_set_player_led(&rx,first_led_player);if(first_led_player==1){log.watch_device=pad.deviceId;log.watch_owner=primary_owner;log.reclaim_seen=0;slisk_status("PLAYER1_HANDOFF_WATCH_ARMED");}}
    }
    if(phase==2 && now>deadline){
     slisk_status("VDA_OWNER_TIMEOUT_CLEANUP");
@@ -418,7 +462,11 @@ int slisk_usb_run(void){
    if(second_phase==2 && now>second_deadline){slisk_status("PLAYER3_OWNER_TIMEOUT");second_phase=4;}
   }
   if(second_phase==2 || second_phase==3){
-   if(res2==XW_PACKET_DISCONNECTED){slisk_status("PLAYER3_RADIO_DISCONNECTED");second_phase=4;}
+   if(res2==XW_PACKET_DISCONNECTED){
+    slisk_status("PLAYER3_RADIO_OFFLINE_KEEPING_VIRTUAL_PAD");
+    if(pad2.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad2,&d);}
+    if(second_large||second_small){receiver_set_rumble(&rx2,0,0);second_large=second_small=0;}
+   }
    if(second_phase==2 && now-second_frame>=16){
     ScePadData d;c4fPadDataNeutral(&d);
     if(!(f2.buttons&XW_BTN_CROSS))second_a_released=1;
@@ -497,7 +545,11 @@ int slisk_usb_run(void){
    if(third_phase==2 && now>third_deadline){slisk_status("PLAYER4_OWNER_TIMEOUT");third_phase=4;}
   }
   if(third_phase==2||third_phase==3){
-   if(res3==XW_PACKET_DISCONNECTED){slisk_status("PLAYER4_RADIO_DISCONNECTED");third_phase=4;}
+   if(res3==XW_PACKET_DISCONNECTED){
+    slisk_status("PLAYER4_RADIO_OFFLINE_KEEPING_VIRTUAL_PAD");
+    if(pad3.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad3,&d);}
+    if(third_large||third_small){receiver_set_rumble(&rx3,0,0);third_large=third_small=0;}
+   }
    if(third_phase==2 && now-third_frame>=16){
     ScePadData d;c4fPadDataNeutral(&d);
     if(!(f3.buttons&XW_BTN_CROSS))third_a_released=1;
@@ -540,6 +592,10 @@ int slisk_usb_run(void){
   }
   if(phase==3 && res==XW_PACKET_INPUT && ((f.buttons&(XW_BTN_OPTIONS|XW_BTN_SHARE))==(XW_BTN_OPTIONS|XW_BTN_SHARE))){c4fLog("SLISK start+back requested shutdown\n");break;}
  }
+ /* Always release all three virtual PS4 devices on exit, even if a radio is offline. */
+ slisk_status("CLEANUP_ALL_VIRTUAL_PADS");
+ if(third_large||third_small)receiver_set_rumble(&rx3,0,0);
+ if(pad3.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad3,&d);c4fVirtualPadRemove(&pad3);}
  if(second_large||second_small)receiver_set_rumble(&rx2,0,0);
  if(pad2.owned){ScePadData d;c4fPadDataNeutral(&d);(void)c4fVirtualPadInsert(&pad2,&d);c4fVirtualPadRemove(&pad2);}
  if(last_rumble_large||last_rumble_small)receiver_set_rumble(&rx,0,0);
@@ -567,6 +623,12 @@ int slisk_test_owner_event(const char *line,uint64_t candidate,uint32_t *out_own
  if(!scan_state.owner_seen)return 0;
  *out_owner=scan_state.owner;
  return 1;
+}
+int slisk_test_account_reclaim(const char *line,uint64_t virtual_id,uint32_t owner){
+ LogScan l={0};l.seen_marker=1;l.watch_device=virtual_id;l.watch_owner=owner;
+ size_t n=strlen(line);if(n>=sizeof(l.line))return 0;
+ memcpy(l.line,line,n);l.used=n;handle_line(&l);
+ return l.reclaim_seen;
 }
 void slisk_test_map_frame(const XWPadFrame *f,ScePadData *out){mapped(f,out);}
 int slisk_test_owner_allowed(uint32_t owner,int32_t active_ds4){return slisk_owner_allowed(owner,active_ds4);}
