@@ -1,40 +1,60 @@
-# Slisk — Xbox 360 Wireless Controllers on PS4
+# Slisk — Xbox 360 Wireless Controllers on PS4 🎮
 
-**Free and open-source PS4 GoldHEN ELF payload (GNU GPL v3).**
+**Free and open-source GoldHEN PS4 ELF payload · [Latest release: v1.1.6](https://github.com/flodmarkss/Slisk/releases/tag/v1.1.6) · GNU GPLv3**
 
-Slisk lets you use **up to three wireless Xbox 360 controllers** through a Microsoft Xbox 360 USB wireless receiver (USB VID:PID `045e:0719`) alongside a DualShock 4 on a jailbroken PlayStation 4. No intermediary PC or installed Control4Free application is required.
+Slisk lets you use **up to three wireless Xbox 360 controllers** on a jailbroken PlayStation 4 with a Microsoft Xbox 360 wireless USB receiver (VID:PID `045e:0719`). No PC intermediary or separately installed Control4Free application is needed.
+
+## Download
+
+**[Download Slisk v1.1.6 from GitHub Releases](https://github.com/flodmarkss/Slisk/releases/tag/v1.1.6)**
+
+- [PS4 ELF — slisk-x360-directusb.elf](https://github.com/flodmarkss/Slisk/releases/download/v1.1.6/slisk-x360-directusb.elf)
+- [Complete corresponding source — slisk-complete-source.tar.gz](https://github.com/flodmarkss/Slisk/releases/download/v1.1.6/slisk-complete-source.tar.gz)
+- [SHA256 checksums](https://github.com/flodmarkss/Slisk/releases/download/v1.1.6/SHA256SUMS.txt)
 
 ## Features
 
-- DualShock 4 as player 1; three Xbox 360 wireless controllers as players 2, 3 and 4
-- Independent buttons, analog sticks, LEDs for players 2–4, and rumble feedback
-- Wireless controller reconnection after power-off (available in the experimental branches, not yet promoted to stable `main`)
-- GoldHEN PayLoader-compatible standalone `.elf`
-- Xbox connection diagnostic log at `/data/slisk_x360/slisk.log`
-- No 20-minute or 120-second inactivity cutoff in experimental builds (stable `main` retains the earlier safety timeouts)
+- Three Xbox 360 wireless controllers in addition to the DualShock 4 (four physical controllers in total)
+- Xbox buttons, sticks, separate rumble feedback and Xbox player LEDs for players 1–4 as applicable
+- Reconnect Xbox controllers after powering them off and back on
+- No automatic 20-minute session limit or 120-second inactivity shutdown
+- **Exclusive player 1 handoff:** Xbox can take over the account previously used by DualShock 4. If DualShock 4 reclaims that account, Slisk releases the Xbox virtual pad; release and press Xbox A to choose a new account
+- Other Xbox controllers may use their own distinct PS4 users / Guest sessions
+- Log file: `/data/slisk_x360/slisk.log`
 
-## Current status — October 2026
+**Hardware-tested:** The maintainer verified the three-controller setup, rumble, reconnection, correct player LED, and exclusive Xbox/DS4 account handoff on a real PS4. This is community software, not a guarantee of compatibility with all firmware, receivers or games.
 
-Three Xbox 360 controllers, correct LEDs, rumble, and reconnection were confirmed by a tester on a real PS4. The current stable `main` branch preserves the earlier hardware-tested multi-controller version. Reconnect, unlimited-session and duplicate-account retry changes exist on separate development branches; **the account-collision fix still requires hardware verification**. Do not treat development artifacts as a formally released or universally tested product.
+## Requirements
 
-**Important:** Choose distinct PS4 accounts or Guest sessions for each Xbox controller, not the account already using the DualShock 4. If a virtual controller becomes stuck, restart the PS4 before retrying.
+- Jailbroken PlayStation 4 with compatible GoldHEN and PayLoader
+- Microsoft Xbox 360 wireless USB receiver compatible with Slisk (`045e:0719`)
+- One to three paired wireless Xbox 360 controllers
+- An active DualShock 4 account/session to start the payload
 
-## Requirements and basic use
+## Quick start
 
-- PS4 running compatible GoldHEN with PayLoader support and an active DualShock 4 user session
-- Microsoft Xbox 360 wireless USB receiver, compatible wireless Xbox 360 controllers
-- Load the GitHub Actions-built `slisk-x360-directusb.elf` with GoldHEN's PayLoader; press A on each Xbox controller when prompted and select a **different** PS4 user/Guest for each
+1. Download `slisk-x360-directusb.elf` from the [release page](https://github.com/flodmarkss/Slisk/releases/tag/v1.1.6).
+2. Connect the Xbox 360 USB receiver and pair the Xbox controllers with it.
+3. Sign in with DualShock 4 and start the ELF using GoldHEN PayLoader.
+4. Press **A** on the Xbox controller when Slisk prompts you, then select a PS4 user or Guest.
+5. To use Xbox as player 1, choose the account currently associated with DualShock 4. PS4 may disconnect the DS4 from this account. If you subsequently sign the DS4 back into the same account, Slisk should release the Xbox virtual controller so it can select a user again.
 
-For unattended launch, GoldHEN's PayLoader AutoRun Queue may be used when available in the installed GoldHEN version; verify normal operation manually first. Do **not** put this ELF in `plugins.ini` (PRX plugin mechanism).
+For other players, choose distinct accounts or Guest sessions. You may use GoldHEN's **PayLoader AutoRun Queue** after verifying manual startup. **Do not install the ELF in `plugins.ini`**; that is for PRX plugins, not standalone ELF payloads.
 
-## Source and reproducible builds
+If a controller becomes unresponsive or the user session behaves unexpectedly, exit the payload or restart the console. Avoid experimenting with unsaved game progress.
 
-See [Build and source distribution](docs/BUILD-AND-SOURCE.md). The build uses the exact Control4Free revision `5a8f9e3d0e75378644e7f7b2df6176c386a24da9` from https://github.com/MoHadiShibli/Control4Free, linked into Slisk. The GitHub Actions workflow pins the revision, applies explicit Slisk logging modifications, builds a PS4 SDK container, compiles the ELF, and publishes an artifact.
+## Build and source code
 
-## License and third-party attribution
+Slisk's [GitHub Actions build workflow](.github/workflows/slisk-build.yml) runs offline tests, compiles the PS4 ELF and packages the complete corresponding source code. The source archive includes Slisk, its build instructions and scripts, the pinned Control4Free source, and applicable notices.
 
-Slisk and the combined ELF are distributed under **GNU General Public License version 3 only**; read [LICENSE](LICENSE). The virtual PS4 pad, logging, kernel log parsing and feedback components are derived from **Control4Free by MoHadiShibli and contributors**, under GPLv3. Preserve original copyright notices. See [Third-party notices](systempayload/THIRD_PARTY.md) and [Modification history](docs/MODIFICATIONS.md).
+See [Build and source distribution](docs/BUILD-AND-SOURCE.md) and [Modification history](docs/MODIFICATIONS.md).
 
-If redistributing an ELF, also provide the complete corresponding source code, build scripts, third-party sources and applicable notices in a GPLv3-compliant way. This repository's current development binaries are not yet packaged as a public release.
+## Credits and license
 
-**Unofficial community project.** Not affiliated with, sponsored by or endorsed by Sony, Microsoft, or the Control4Free maintainers. Software is provided without warranty; PS4 system modifications carry risk.
+Slisk is developed collaboratively by **flodmarkss and OpenAI ChatGPT** (AI-assisted implementation, debugging and documentation), with real-hardware testing and project stewardship by flodmarkss.
+
+The project incorporates GPLv3-licensed source from [Control4Free](https://github.com/MoHadiShibli/Control4Free), by **MoHadiShibli and contributors**, and upstream components credited in [Third-party notices](systempayload/THIRD_PARTY.md). All third-party authors retain their own rights and notices.
+
+Distributed under **GNU GPL version 3**; see [LICENSE](LICENSE). Source and corresponding build information are provided with the release.
+
+**Unofficial community project.** Not affiliated with or endorsed by Sony, Microsoft or Control4Free maintainers. Provided without warranty.
