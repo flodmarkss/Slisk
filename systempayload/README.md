@@ -1,38 +1,29 @@
-# Slisk v0.9.1 – fristående Xbox 360 → PS4 GoldHEN systempayload (EXPERIMENTELL)
+# Slisk systempayload
 
-**Mål:** Xbox 360 Wireless Receiver VID 045E / PID 0719 i PS4 USB, utan Windows/PC, Raspberry Pi eller installerad Control4Free. DualShock 4 för spelare 1 och Xbox 360 som virtuell DualShock 4 för spelare 2.
+This directory contains the standalone GoldHEN ELF that exposes up to three Xbox 360 wireless controllers as PS4 virtual controllers alongside a DualShock 4.
 
-**Status:** Kod och hosttester under utveckling. Detta är INTE konsolverifierat eller garanterat spelbart. Kör INTE äldre PRX-filer v0.7.5 eller v0.7.9 som låste konsolen. En systempayload behöver korrekt GoldHEN-version och rättigheter.
+## Current development behavior
 
-## Arkitektur
+- Xbox 360 receiver via USB VID:PID `045e:0719`
+- Three wireless Xbox 360 channels: PS4 players 2, 3, 4, separate user/Guest selection
+- Face buttons, sticks, D-pad, shoulder buttons, LEDs and rumble
+- Disconnect/reconnect while keeping player ownership
+- No scheduled 20-minute shutdown or 120-second input inactivity shutdown
+- Logs: `/data/slisk_x360/slisk.log`
+- Manual cancellation and virtual controller cleanup at normal exit
 
-- Egen systempayload (ELF), **inte** spel-PRX. Startas via GoldHEN PayLoader.
-- Återanvänder v0.7.0:s verkligt PS4-testade trådlösa Xbox-paketavkodning.
-- Sony libSceUsbd via `dlopen`/`dlsym`; inspekterar USB-interface/endpoint-deskriptorer. Ingen nätverkstransport.
-- Använder PS4-VDA-kod byggd från en **pinnad upstream GPL-3.0-källa** (Control4Free), men kräver inte att programmet är installerat på PS4.
-- Startar inte AddDevice förrän fysisk Xbox A registrerats, `/dev/klog` har öppnats och ett unikt klog-testmeddelande har mottagits.
-- Kräver virtuell `DEVICE_ADDED` subtype 2 och giltig separat `DEVICE_OWNER_CHANGED`, samt kontroll att användaren inte är DualShock 4:s tidigare profil.
-- Neutraliserar indata, stoppar och försöker ta bort den virtuella enheten vid fel, frånkoppling eller tidsgräns.
-- Högst **en** trådlös Xbox-kontroll i första testet.
+The three-controller functionality and reconnect were confirmed by a hardware tester. The newest duplicate-PS4-account retry fix still needs console verification. Avoid selecting the DualShock 4 user for a virtual Xbox controller.
 
-## Uppstart / loggar (när en granskad ELF faktiskt finns)
+## Build
 
-En kompatibel GoldHEN-installation med PayLoader (minst v2.4b18.10 enligt referensprojektet) krävs för systempayloads. Starta inte från `plugins.ini`; denna ELF tillhör GoldHEN-payloadservern. När användaren ska testköra den kommer instruktioner för rätt loader och säker avstängning att bifogas.
+See [the full build and GPLv3 corresponding source guide](../docs/BUILD-AND-SOURCE.md). GitHub Actions fetches a pinned revision of GPLv3 **Control4Free** by **MoHadiShibli and contributors** and applies explicitly documented logging modifications. Its PS4 virtual-device code is compiled directly into the Slisk ELF. The console does not need the Control4Free app installed.
 
-Loggar: `/data/slisk_x360/control4free.log` (historiskt filnamn från VDA-komponenten, inte ett runtime-beroende på Control4Free).
+The build workflow creates `build/slisk-x360-directusb.elf` and a complete corresponding source archive. The latter should accompany any public executable distribution.
 
-## Licens
+## License and notices
 
-`src/xw_core.*` kommer från det tidigare Slisk-utvecklingsarbetet. Virtuellt PS4-stöd vid bygge hämtas från GPL-3.0-projektet Control4Free av MoHadiShibli, vars licens måste bibehållas för den sammanlänkade ELF:en. `src/main.c` och `src/slisk_usb.c` är nya Slisk-integrationsmoduler licensierade GPL-3.0-only i denna variant. Vidare distribution ska ha fullständig GPL-3.0-källkod eller motsvarande erbjudande.
+Combined ELF: **GNU GPL version 3 only**. See [LICENSE](../LICENSE), [third-party attribution](THIRD_PARTY.md) and [change history](../docs/MODIFICATIONS.md). Retain original third-party copyright notices. Do not redistribute ELF without GPLv3-compliant provision of its corresponding source.
 
-## Hårdvarurisk
+## Installation
 
-Tidigare v0.7.9 hängde hela användarens konsol. Offline-tester och cross-build är nödvändiga men **inte tillräckliga** för att garantera att den nya payloaden är säker. Följ uttrycklig installationsinstruktion först när nästa test är berett.
-
-## v0.9.1 verifiering
-
-- Delay 200 ms before adopting a single MBus event, abort if ambiguous.
-- Check USB descriptors for null pointers before walking interfaces.
-- Disable klog write-back while consuming klog; restore after cleanup.
-
-- Stoppa innan AddDevice om den första inloggade PS4-profilen inte kan verifieras eller om Pad-privilegier nekas.
+The ELF is launched by GoldHEN PayLoader, not by `plugins.ini`. Where supported, configure GoldHEN PayLoader AutoRun Queue after manually verifying a build. Test on your own responsibility: earlier development versions could hang or crash the console. This is unofficial community software with no warranty.
